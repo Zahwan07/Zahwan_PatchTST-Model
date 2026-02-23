@@ -1,0 +1,353 @@
+================================================================================
+  PATCHTST PLANT GROWTH PREDICTION — CODE & METHODOLOGY EXPLANATION
+  (For Research Paper / Final College Project)
+================================================================================
+
+This document explains every file and key code block: what they do, how
+PatchTST works, how it relates to the data, and how it differs from GRU/LSTM.
+
+--------------------------------------------------------------------------------
+1. PROJECT OVERVIEW
+--------------------------------------------------------------------------------
+
+Goal: Predict the next 7 days of environment conditions (temperature, weather,
+soil moisture, pH) for red leaf lettuce (Lactuca sativa L.) in Bandung
+(Coblong), then turn the numeric forecast into natural-language recommendations
+via an LLM.
+
+Inputs (4 features):
+  - suhu       = temperature (°C)
+  - cuaca      = weather (0=clear, 1=cloudy, 2=light rain, ...)
+  - kelembapan = soil moisture (0–1)
+  - ph         = soil/substrate pH (optimal 6.0–7.0 for lettuce)
+
+Output: 7-day multivariate forecast (all 4 variables for each of 7 days), then
+LLM-generated recommendations (e.g. "Weather will likely stay 23°C for 2 days;
+expect soil moisture to reduce...").
+
+
+--------------------------------------------------------------------------------
+2. WHERE IS PATCHTST AND HOW DOES IT WORK?
+--------------------------------------------------------------------------------
+
+Two implementations are available:
+
+  (A) Official PatchTST (model/patchtst_official.py) — used when the
+      PatchTST-main folder from GitHub is present and config.USE_OFFICIAL_PATCHTST
+      is True. It wraps the full architecture: patching (segmenting the
+      sequence into patches), RevIN (reversible instance normalization),
+      channel-independent Transformer encoder, and flatten head. Optimizations:
+      fewer tokens (patches instead of raw timesteps), better normalization,
+      and per-channel processing.
+
+  (B) Simple Transformer (model/patchtst.py) — fallback when the official
+      repo is not present or USE_OFFICIAL_PATCHTST is False. Same input/output
+      interface; no patching or RevIN.
+
+Below describes the simple form; the official one follows the same I/O.
+
+File: model/patchtst.py (simple version)
+
+PatchTST is a time-series forecasting model based on the Transformer
+architecture. In this project the simple form is implemented as:
+
+  - Input: a sequence of past timesteps, each with 4 values (suhu, cuaca,
+    kelembapan, ph). Shape: (batch, INPUT_LEN, 4) e.g. (batch, 24, 4).
+
+  - Processing:
+    1. Embedding: Each 4-D vector is projected to a higher dimension (d_model=64)
+       via a linear layer. So each timestep becomes a 64-D vector.
+    2. Transformer encoder: The sequence of 24 × 64-D vectors is passed
+       through a standard Transformer encoder (self-attention + feed-forward).
+       This lets the model use information from all past timesteps at once
+       (global context), unlike RNNs that process step-by-step.
+    3. Last timestep: Only the representation of the last timestep (index -1)
+       is taken: shape (batch, 64).
+    4. Prediction head: A linear layer maps this 64-D vector to
+       pred_len * input_dim = 7 * 4 = 28 values, then reshaped to (batch, 7, 4).
+       So the model outputs 7 future timesteps, each with 4 variables.
+
+  - Output: (batch, 7, 4) — 7 days × 4 environment variables.
+
+  - Regularization: Dropout (0.15) after embedding, inside the transformer
+    layer, and before the head to reduce overfitting.
+
+Why "Patch" in PatchTST: The full PatchTST paper divides the time series
+into patches (short segments) and treats each patch as a token. This
+implementation uses the raw sequence as tokens (one timestep = one token)
+without patching; the core idea—Transformer over time for forecasting—is the
+same.
+
+
+--------------------------------------------------------------------------------
+3. HOW DOES PATCHTST CORRELATE WITH THE DATA?
+--------------------------------------------------------------------------------
+
+  - Data shape: Each training sample is built from a long time series of
+    (suhu, cuaca, kelembapan, ph). We take a sliding window:
+      X = data[i : i+24]   → 24 past timesteps (input to the model)
+      Y = data[i+24 : i+24+7] → next 7 timesteps (target to predict)
+
+  - Correlation: The model learns from the joint history of all four
+    variables. The Transformer’s self-attention learns which past timesteps
+    and which variables are useful to predict the future. For example, a
+    drop in soil moisture in the last few days might correlate with a
+    continued drop in the next week; temperature and weather (cuaca) can
+    influence that trend. All of this is learned from the data via the
+    MSE loss between predicted (batch, 7, 4) and target (batch, 7, 4).
+
+  - Scaling: Data are standardized with StandardScaler (zero mean, unit
+    variance) before training. Predictions are inverse-transformed back to
+    original units (e.g. °C, 0–1 moisture, pH) for interpretation and for
+    the LLM.
+
+
+--------------------------------------------------------------------------------
+4. WHY PATCHTST INSTEAD OF GRU/LSTM?
+--------------------------------------------------------------------------------
+
+  - Parallelism: Transformers process the whole input sequence in parallel
+    (all 24 timesteps at once). GRU/LSTM process one timestep at a time and
+    depend on the previous hidden state, so they are sequential and harder
+    to parallelize on GPU.
+
+  - Long-range dependencies: Self-attention lets any timestep attend to any
+    other timestep directly. In LSTM/GRU, information from early timesteps
+    must pass through many steps to reach the end, and can fade (vanishing
+    gradient). For environment forecasting, patterns like "same weather
+    pattern 2 weeks ago" can be captured more directly with attention.
+
+  - Expressiveness: Transformers have been shown to scale well with data and
+    model size for many sequence tasks. PatchTST in the literature has
+    achieved strong results on time-series benchmarks compared to RNN-based
+    baselines.
+
+  - Trade-off: Transformers typically need more data and parameters to shine.
+    For small datasets, LSTM/GRU can still work well. This project uses a
+    small Transformer (2 layers, 4 heads, d_model=64) to keep the model
+    suitable for a college project while still using the PatchTST/Transformer
+    methodology.
+
+
+--------------------------------------------------------------------------------
+5. FILE-BY-FILE EXPLANATION
+--------------------------------------------------------------------------------
+
+--- config.py ---
+
+  Purpose: Single place for all hyperparameters and column names.
+
+  - FEATURES: List of CSV column names ["suhu", "cuaca", "kelembapan", "ph"].
+  - INPUT_DIM: 4 (number of input/output variables).
+  - INPUT_LEN: 24 (number of past timesteps used as input).
+  - PRED_LEN: 7 (number of future days to predict).
+  - LETTUCE_KELEMBAPAN_OPTIMAL, LETTUCE_PH_OPTIMAL: Reference ranges for
+    red leaf lettuce (used in data generation and documentation).
+
+
+--- fusion.py ---
+
+  Purpose: Combine the two data sources into one time series for training.
+
+  - load_and_merge(): Reads data/internet_data.csv and data/realtime_data.csv,
+    concatenates them row-wise (internet first, then realtime), and returns a
+    single DataFrame. Training uses this merged series so the model sees both
+    "historical" (internet) and "recent" (realtime) data. At prediction time,
+    only the last INPUT_LEN rows (from realtime) are used as the model input.
+
+
+--- preprocess.py ---
+
+  Purpose: Turn the merged time series into scaled data and into (X, Y)
+  windows for training.
+
+  - prepare_data(): Calls load_and_merge(), keeps only the FEATURES columns,
+    fits a StandardScaler on the full merged data, and returns (data_scaled,
+    scaler). The scaler is saved (joblib) so the same scaling is applied at
+    prediction time.
+
+  - create_dataset(data, input_len, pred_len): Sliding window. For each
+    valid index i, X[i] = data[i : i+input_len], Y[i] = data[i+input_len :
+    i+input_len+pred_len]. So X has shape (n_samples, 24, 4), Y has shape
+    (n_samples, 7, 4). The model learns to map X → Y.
+
+
+--- train.py ---
+
+  Purpose: Train the PatchTST model and save the best checkpoint and scaler.
+
+  - Seeds: Fixed random seeds (42) for reproducibility.
+  - Data: prepare_data() and create_dataset() give X, Y. Converted to PyTorch
+    tensors; then 80% train / 20% validation split (random permutation).
+  - Model: PatchTST(input_dim=4, pred_len=7, dropout=0.15).
+  - Loss: MSE between model output (batch, 7, 4) and Y (batch, 7, 4).
+  - Optimizer: Adam with lr=0.001 and weight_decay=1e-4 (L2 regularization).
+  - Loop: For each epoch, forward on train data, backward, step. Every 10
+    epochs (and last epoch), evaluate on validation set: compute val loss and
+    metrics (MAE, MSE, MAPE via utils.compute_metrics).
+  - Early stopping: If validation loss does not improve for PATIENCE (50)
+    epochs (counted in steps of 10), training stops. The model state with the
+    lowest validation loss is restored and saved as patchtst_model.pth.
+  - Output: Saves model state dict and scaler (scaler.joblib); prints final
+    validation MAE, MSE, MAPE.
+
+
+--- predict.py ---
+
+  Purpose: Load the trained model and scaler, take the last INPUT_LEN rows of
+  realtime_data as input, produce a 7-day forecast, inverse-scale it, and
+  optionally send it to an LLM for recommendations.
+
+  - Load: PatchTST model (same architecture as training), state from
+    patchtst_model.pth, scaler from scaler.joblib.
+  - Input: Read data/realtime_data.csv, keep FEATURES, scale with
+    scaler.transform (no fit). Take the last INPUT_LEN rows as one sequence;
+    add batch dimension → (1, 24, 4).
+  - Forward: model(input_tensor) → (1, 7, 4) in scaled space.
+  - Inverse transform: Reshape to (7, 4), call scaler.inverse_transform to get
+    values in original units (e.g. °C, 0–1, pH).
+  - Format: Build a list of 7 dicts (suhu, cuaca, kelembapan, ph) for the
+    LLM.
+  - Print: 7-day numeric forecast (via forecast_to_text in llm_recommendations).
+  - LLM: get_recommendations_from_forecast() sends the forecast text to the
+    LLM API and prints the returned recommendation text (or a message if no
+    API key or on error).
+
+
+--- build_internet_data.py ---
+
+  Purpose: Build data/internet_data.csv from BMKG (weather/temperature) and
+  lettuce-optimal soil moisture/pH, and write dummy data/realtime_data.csv.
+
+  - load_bmkg_rows(): Tries to read data/bmkg_coblong.csv; if missing or
+    empty, calls fetch_bmkg_coblong.fetch_bmkg_rows() and saves to
+    bmkg_coblong.csv. Returns list of dicts with suhu, cuaca, kelembapan, ph.
+  - load_lettuce_rows(): Reads data/lettuce_reference_data.csv if present;
+    otherwise runs generate_lettuce_data.main() to create it, then reads and
+    returns rows.
+  - build_internet_data(): Merges BMKG and lettuce by row index. For each
+    row i, suhu and cuaca come from BMKG (cycling if BMKG has fewer rows),
+    kelembapan and ph from lettuce. Writes data/internet_data.csv.
+  - write_dummy_realtime(): Generates a fixed number of rows (≥ INPUT_LEN+10)
+    of plausible dummy data (temperature 20–28°C, cuaca 0/1/2, kelembapan and
+    ph in lettuce-optimal ranges) with slight autocorrelation. Writes
+    data/realtime_data.csv. Used when no live sensors are available.
+  - main(): Runs build_internet_data() then write_dummy_realtime().
+
+
+--- generate_lettuce_data.py ---
+
+  Purpose: Create data/lettuce_reference_data.csv with 200 rows of synthetic
+  data where kelembapan and ph stay in the optimal ranges for Lactuca sativa
+  (from config and data/lettuce_reference.md).
+
+  - generate_row(prev): If prev is None, draws random values in valid ranges.
+    Otherwise adds small random changes to prev (autocorrelation) and clips
+    to lettuce-optimal and physical ranges. Returns one row dict.
+  - main(): Generates 200 rows, writes CSV with FEATURES columns. Used by
+    build_internet_data when lettuce_reference_data.csv is missing.
+
+
+--- fetch_bmkg_coblong.py ---
+
+  Purpose: Fetch weather and temperature from BMKG for Coblong, Bandung
+  (region code 32.73.02), and optionally save to data/bmkg_coblong.csv.
+
+  - API_URL: BMKG public API with adm4=32.73.02.
+  - CUACA_MAP: Maps Indonesian weather text (e.g. "cerah", "berawan") to
+    numeric codes 0, 1, 2, ...
+  - fetch_bmkg_xml(url): Downloads raw response (bytes).
+  - parse_xml_cuaca_suhu(raw): Tries to parse XML tags for suhu, cuaca,
+    kelembapan; returns list of dicts; ph default 6.0.
+  - parse_json_cuaca_suhu(raw): If BMKG returns JSON, parses nested structure
+    (e.g. prakiraan.sekarang, besok) and extracts suhu, cuaca, kelembapan, ph.
+  - fetch_bmkg_rows(save_to_bmkg_csv): Fetches, parses (JSON then XML),
+    optionally overwrites data/bmkg_coblong.csv, returns list of row dicts.
+  - main(): Calls fetch_bmkg_rows and prints status. Used by build_internet_data
+    or run manually to refresh BMKG data.
+
+
+--- llm_recommendations.py ---
+
+  Purpose: Turn the 7-day numeric forecast into text and send it to an LLM to
+  get natural-language recommendations for the user.
+
+  - CUACA_LABELS: Maps numeric cuaca to readable text (e.g. 0 → "cerah (clear)").
+  - forecast_to_text(forecast_7d): Takes a list of 7 dicts (or (7,4) array)
+    and formats one line per day: temperature, weather, soil moisture, pH.
+  - get_llm_recommendations(forecast_text, crop, location): Builds a prompt
+    asking the LLM to act as an agricultural advisor and write 2–4 paragraphs
+    (what to expect, soil moisture/irrigation, pH, tips). Uses OPENAI_API_KEY
+    or LLM_API_KEY; optional LLM_API_BASE and LLM_MODEL. Returns the model’s
+    reply or an error/placeholder message if no key or request fails.
+  - get_recommendations_from_forecast(forecast_7d, ...): Convenience: runs
+    forecast_to_text then get_llm_recommendations. Used by predict.py.
+
+
+--- utils.py ---
+
+  Purpose: Evaluation metrics for the forecast (used in training and optionally
+  elsewhere).
+
+  - mae(pred, target): Mean Absolute Error — mean of |pred - target|.
+  - mse(pred, target): Mean Squared Error — mean of (pred - target)^2.
+  - mape(pred, target): Classic MAPE (%). Unstable when target ≈ 0 (e.g.
+    cuaca=0); kept for reference.
+  - smape(pred, target): Symmetric MAPE — denominator (|pred|+|target|)/2 + eps,
+    so it stays bounded (0–200%) and is safe for small targets.
+  - compute_metrics(pred, target): Returns dict with MAE, MSE, and MAPE
+    (actually sMAPE) for reporting in train.py.
+
+
+--------------------------------------------------------------------------------
+6. END-TO-END DATA FLOW
+--------------------------------------------------------------------------------
+
+  (1) Data preparation
+      build_internet_data.py → internet_data.csv (BMKG + lettuce)
+                            → realtime_data.csv (dummy or later live)
+
+  (2) Training
+      fusion.load_and_merge() → internet + realtime concatenated
+      preprocess.prepare_data() → scaled series + scaler
+      preprocess.create_dataset() → (X, Y) windows
+      train.py → train/val split, train PatchTST, early stopping, save best
+                model + scaler
+
+  (3) Prediction
+      predict.py loads model + scaler, reads realtime_data, takes last 24
+      rows, scales, runs PatchTST → (1, 7, 4), inverse-scales → 7-day
+      forecast in original units → printed and sent to LLM for recommendations.
+
+
+--------------------------------------------------------------------------------
+7. KEY EQUATIONS (FOR PAPER)
+--------------------------------------------------------------------------------
+
+  - Input window:  X ∈ R^{24×4}  (24 timesteps, 4 features)
+  - Embedding:     H = Dropout(Linear(X))  →  H ∈ R^{24×64}
+  - Transformer:  Z = TransformerEncoder(H)  →  Z ∈ R^{24×64}
+  - Last step:     z = Z[:,-1,:]  →  z ∈ R^{64}
+  - Output:        Y_pred = Reshape(Linear(Dropout(z)))  →  Y_pred ∈ R^{7×4}
+
+  Loss (training):  L = MSE(Y_pred, Y_true)  over all samples and all
+  (timestep, variable) positions.
+
+  Metrics: MAE = mean|Y_pred - Y_true|; MSE = mean((Y_pred - Y_true)^2);
+  MAPE (reported) = sMAPE = mean( 2|Y_pred - Y_true| / (|Y_pred| + |Y_true| + ε) ) × 100%.
+
+
+--------------------------------------------------------------------------------
+8. REFERENCES YOU CAN CITE
+--------------------------------------------------------------------------------
+
+  - PatchTST: "A Time Series is Worth 64 Words: Long-term Forecasting with
+    Transformers" (Nie et al., ICLR 2023) — for the PatchTST/Transformer
+    time-series forecasting idea.
+  - BMKG: Indonesian agency for weather (Coblong 32.73.02).
+  - Lactuca sativa optimal ranges: e.g. soil moisture 55–60% field capacity,
+    pH 6.0–7.0 (see data/lettuce_reference.md and references therein).
+
+================================================================================
+End of Explanation.txt
+================================================================================

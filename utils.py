@@ -1,0 +1,35 @@
+"""Evaluation metrics for PatchTST forecasts."""
+import torch
+import numpy as np
+
+
+def mae(pred: torch.Tensor, target: torch.Tensor) -> float:
+    """Mean Absolute Error."""
+    return torch.abs(pred - target).mean().item()
+
+
+def mse(pred: torch.Tensor, target: torch.Tensor) -> float:
+    """Mean Squared Error."""
+    return ((pred - target) ** 2).mean().item()
+
+
+def mape(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-8) -> float:
+    """Classic MAPE (%). Explodes when target is near 0 (e.g. cuaca=0). Use smape() for a bounded metric."""
+    denom = torch.abs(target) + eps
+    return (torch.abs(pred - target) / denom).mean().item() * 100.0
+
+
+def smape(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-8) -> float:
+    """Symmetric MAPE (%). Bounded 0–200%; safe when target or pred is near zero (e.g. cuaca)."""
+    num = torch.abs(pred - target)
+    denom = (torch.abs(pred) + torch.abs(target)) / 2.0 + eps
+    return (num / denom).mean().item() * 100.0
+
+
+def compute_metrics(pred: torch.Tensor, target: torch.Tensor) -> dict:
+    """Return dict with MAE, MSE, MAPE (symmetric, bounded)."""
+    return {
+        "MAE": mae(pred, target),
+        "MSE": mse(pred, target),
+        "MAPE": smape(pred, target),
+    }
