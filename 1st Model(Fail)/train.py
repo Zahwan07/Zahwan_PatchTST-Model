@@ -29,11 +29,16 @@ X_train, X_val = X_tensor[idx[:train_end]], X_tensor[idx[train_end:]]
 Y_train, Y_val = Y_tensor[idx[:train_end]], Y_tensor[idx[train_end:]]
 print(f"Samples: train={len(X_train)}, val={len(X_val)}")
 
-model = PatchTST(input_dim=INPUT_DIM, pred_len=PRED_LEN)
+model = PatchTST(input_dim=INPUT_DIM, pred_len=PRED_LEN, dropout=0.15)
 criterion = nn.MSELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
 
-EPOCHS = 1000
+EPOCHS = 500
+PATIENCE = 50
+best_val_loss = float("inf")
+best_state = None
+epochs_no_improve = 0
+
 for epoch in range(EPOCHS):
     model.train()
     optimizer.zero_grad()
@@ -42,7 +47,7 @@ for epoch in range(EPOCHS):
     loss.backward()
     optimizer.step()
 
-    if epoch % 10 == 0:
+    if epoch % 10 == 0 or epoch == EPOCHS - 1:
         model.eval()
         with torch.no_grad():
             val_out = model(X_val)
@@ -50,13 +55,28 @@ for epoch in range(EPOCHS):
             metrics = compute_metrics(val_out, Y_val)
         print(f"Epoch {epoch:3d}, train_loss={loss.item():.6f}, val_loss={val_loss.item():.6f} | val MAE={metrics['MAE']:.4f}, MSE={metrics['MSE']:.6f}, MAPE={metrics['MAPE']:.2f}%")
 
+        if val_loss.item() < best_val_loss:
+            best_val_loss = val_loss.item()
+            best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 10 if epoch % 10 == 0 else 1
+
+        if epochs_no_improve >= PATIENCE:
+            print(f"\nEarly stopping at epoch {epoch} (no val improvement for {PATIENCE} epochs).")
+            break
+
+if best_state is not None:
+    model.load_state_dict(best_state)
+    print("Restored best model (lowest validation loss).")
+
 model.eval()
 with torch.no_grad():
     val_out = model(X_val)
     final_val = criterion(val_out, Y_val)
     final_metrics = compute_metrics(val_out, Y_val)
 
-print("\n--- Validation metrics ---")
+print("\n--- Validation metrics (best model) ---")
 print(f"Loss (MSE): {final_val.item():.6f}")
 print(f"MAE:  {final_metrics['MAE']:.4f}")
 print(f"MSE: {final_metrics['MSE']:.6f}")

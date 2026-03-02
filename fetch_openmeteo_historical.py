@@ -1,0 +1,110 @@
+"""
+Fetch hourly historical weather from Open-Meteo (Bandung).
+Output: data/historical_environment.csv — at least 2,000+ rows (5 years × 24h ≈ 43,800 rows).
+
+Use for long-term forecasting (1 month) with Main_model pipeline.
+"""
+import requests
+import pandas as pd
+import numpy as np
+
+# Bandung coordinates
+LAT = -6.8783
+LON = 107.6219
+
+# Last 6 years, hourly
+START_DATE = "2020-01-01"
+END_DATE = "2026-02-20"
+
+OUTPUT_PATH = "data/historical_environment.csv"
+
+# Fetch in yearly chunks to avoid API limits
+YEAR_CHUNKS = [
+    ("2020-01-01", "2020-12-31"),
+    ("2021-01-01", "2021-12-31"),
+    ("2022-01-01", "2022-12-31"),
+    ("2023-01-01", "2023-12-31"),
+    ("2024-01-01", "2024-12-31"),
+    ("2025-01-01", "2025-12-31"),
+    ("2026-01-01", "2026-02-28"),
+]
+
+
+def fetch_openmeteo_hourly(start: str, end: str) -> pd.DataFrame:
+    url = (
+        "https://archive-api.open-meteo.com/v1/archive?"
+        f"latitude={LAT}&longitude={LON}"
+        f"&start_date={start}&end_date={end}"
+        "&hourly=temperature_2m,precipitation,relative_humidity_2m"
+        "&timezone=Asia%2FJakarta"
+    )
+    response = requests.get(url, timeout=120)
+    response.raise_for_status()
+    data = response.json()["hourly"]
+    return pd.DataFrame(data)
+
+
+def fetch_openmeteo():
+    """Fetch 5 years of hourly data (chunked by year)."""
+    dfs = []
+    for start, end in YEAR_CHUNKS:
+        print(f"Fetching {start} to {end}...")
+        df = fetch_openmeteo_hourly(start, end)
+        dfs.append(df)
+    df = pd.concat(dfs, ignore_index=True)
+    df = df.drop_duplicates(subset=["time"]).sort_values("time").reset_index(drop=True)
+    return df
+
+
+def generate_soil_moisture(df: pd.DataFrame) -> pd.DataFrame:
+    """Derive soil moisture from hourly precip + humidity (0–1)."""
+    np.random.seed(42)
+    rain = df["precipitation"].fillna(0).values
+    humidity = df["relative_humidity_2m"].fillna(70).values / 100
+
+    soil = []
+    prev = 0.55
+    for r, h in zip(rain, humidity):
+        noise = np.random.normal(0, 0.005)
+        value = 0.7 * prev + 0.2 * min(r / 5, 1) + 0.1 * h + noise
+        value = np.clip(value, 0.35, 0.65)
+        soil.append(value)
+        prev = value
+
+    df["kelembapan"] = soil
+    return df
+
+
+def generate_ph(df: pd.DataFrame) -> pd.DataFrame:
+    """Slow drift in pH (6.0–7.0)."""
+    np.random.seed(123)
+    ph = []
+    base = 6.5
+    for _ in range(len(df)):
+        drift = np.random.normal(0, 0.01)
+        base = base + drift
+        base = np.clip(base, 6.0, 7.0)
+        ph.append(base)
+    df["ph"] = ph
+    return df
+
+
+def build_dataset():
+    df = fetch_openmeteo()
+
+    df = generate_soil_moisture(df)
+    df = generate_ph(df)
+
+    # cuaca: 0=clear, 1=cloudy, 2=rain (hourly precip > 0.5 mm)
+    df["cuaca"] = np.where(df["precipitation"] > 0.5, 2, np.where(df["precipitation"] > 0.1, 1, 0))
+
+    final = df[["time", "temperature_2m", "cuaca", "kelembapan", "ph"]].copy()
+    final = final.rename(columns={"temperature_2m": "suhu"})
+
+    final.to_csv(OUTPUT_PATH, index=False)
+    print(f"\nSaved dataset to {OUTPUT_PATH}")
+    print(f"Total rows: {len(final)} (~{len(final)/24:.0f} days)")
+
+
+if __name__ == "__main__":
+    build_dataset()

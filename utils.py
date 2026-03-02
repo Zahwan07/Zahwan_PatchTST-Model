@@ -26,10 +26,18 @@ def smape(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-8) -> float:
     return (num / denom).mean().item() * 100.0
 
 
-def compute_metrics(pred: torch.Tensor, target: torch.Tensor) -> dict:
-    """Return dict with MAE, MSE, MAPE (symmetric, bounded)."""
-    return {
-        "MAE": mae(pred, target),
-        "MSE": mse(pred, target),
-        "MAPE": smape(pred, target),
-    }
+def compute_metrics(pred: torch.Tensor, target: torch.Tensor, continuous_cols: list = None) -> dict:
+    """
+    Return dict with MAE, MSE, MAPE (symmetric, bounded).
+    If continuous_cols is given (e.g. [0,1,2] for suhu, kelembapan, ph when cuaca is one-hot),
+    MAPE is computed only on those columns — one-hot columns distort MAPE.
+    """
+    mae_val = mae(pred, target)
+    mse_val = mse(pred, target)
+    if continuous_cols is not None:
+        pred_cont = pred[..., continuous_cols]
+        target_cont = target[..., continuous_cols]
+        mape_val = smape(pred_cont, target_cont)
+    else:
+        mape_val = smape(pred, target)
+    return {"MAE": mae_val, "MSE": mse_val, "MAPE": mape_val}

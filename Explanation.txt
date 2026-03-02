@@ -30,26 +30,10 @@ expect soil moisture to reduce...").
 2. WHERE IS PATCHTST AND HOW DOES IT WORK?
 --------------------------------------------------------------------------------
 
-Two implementations are available:
-
-  (A) Official PatchTST (model/patchtst_official.py) — used when the
-      PatchTST-main folder from GitHub is present and config.USE_OFFICIAL_PATCHTST
-      is True. It wraps the full architecture: patching (segmenting the
-      sequence into patches), RevIN (reversible instance normalization),
-      channel-independent Transformer encoder, and flatten head. Optimizations:
-      fewer tokens (patches instead of raw timesteps), better normalization,
-      and per-channel processing.
-
-  (B) Simple Transformer (model/patchtst.py) — fallback when the official
-      repo is not present or USE_OFFICIAL_PATCHTST is False. Same input/output
-      interface; no patching or RevIN.
-
-Below describes the simple form; the official one follows the same I/O.
-
-File: model/patchtst.py (simple version)
+File: model/patchtst.py
 
 PatchTST is a time-series forecasting model based on the Transformer
-architecture. In this project the simple form is implemented as:
+architecture. In this project it is implemented in a simplified form:
 
   - Input: a sequence of past timesteps, each with 4 values (suhu, cuaca,
     kelembapan, ph). Shape: (batch, INPUT_LEN, 4) e.g. (batch, 24, 4).
