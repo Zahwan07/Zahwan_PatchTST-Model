@@ -18,7 +18,7 @@ import pandas as pd
 import joblib
 
 from model.patchtst_official import PatchTST_Official
-from Main_model.config_exp import FEATURES, PRED_LEN, INPUT_LEN
+from Main_model.config_exp import FEATURES_FORECAST, PRED_LEN, INPUT_LEN, ALL_FEATURES
 
 # Paths
 OUT_DIR = os.path.join(ROOT, "Main_model")
@@ -54,18 +54,20 @@ input_tensor = torch.tensor(input_scaled, dtype=torch.float32).unsqueeze(0)
 with torch.no_grad():
     pred_scaled = model(input_tensor)
 
-# Inverse transform: 6 cols -> [suhu, cuaca, kelembapan, ph]
+# Inverse transform -> full feature set
 pred_np = pred_scaled.numpy().reshape(-1, INPUT_DIM)
-pred_raw = preprocessor.inverse_transform(pred_np).reshape(PRED_LEN, 4)
+pred_full = preprocessor.inverse_transform(pred_np).reshape(PRED_LEN, -1)
 
 # Build timestamps (first prediction = 1 hour after last input row)
 last_time = pd.to_datetime(df["time"].iloc[-1])
 pred_times = pd.date_range(start=last_time + pd.Timedelta(hours=1), periods=PRED_LEN, freq="h")
 
-# Save full prediction to CSV
+# Save forecast CSV with main columns [suhu, cuaca, kelembapan, ph]
+col_idx = [ALL_FEATURES.index(c) for c in FEATURES_FORECAST if c in ALL_FEATURES]
+pred_raw = pred_full[:, col_idx] if col_idx else pred_full[:, :4]
 pred_df = pd.DataFrame(
     pred_raw,
-    columns=FEATURES,
+    columns=FEATURES_FORECAST,
     index=pred_times,
 )
 pred_df.index.name = "time"

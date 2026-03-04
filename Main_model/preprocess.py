@@ -8,7 +8,7 @@ import os
 import numpy as np
 import pandas as pd
 
-from Main_model.config_exp import FEATURES, INPUT_LEN, PRED_LEN
+from Main_model.config_exp import INPUT_LEN, PRED_LEN
 from Main_model.preprocessor import EnvironmentPreprocessor
 
 # Project root (parent of Main_model)
