@@ -1,14 +1,14 @@
 """
 Fetch hourly historical weather from Open-Meteo (Bandung).
-Output: data/historical_environment.csv with expanded features for better accuracy.
+Output: data/historical_environment.csv for hydroponic red leaf lettuce.
 
 Features:
 - From API: temperature_2m, relative_humidity_2m, dewpoint_2m, surface_pressure,
   cloud_cover, shortwave_radiation, wind_speed_10m, wind_direction_10m, precipitation
-- Derived: cuaca, kelembapan, ph, wind_dir_sin, wind_dir_cos, hour_sin, hour_cos,
-  doy_sin, doy_cos, temp_lag_24, temp_lag_168
+- Derived: cuaca (weather), humidity (air, 0–1), light_intensity (shortwave W/m²), ph,
+  wind_dir_sin/cos, hour_sin/cos, doy_sin/cos, temp_lag_24/168.
 
-Use for long-term forecasting with Main_model pipeline.
+No soil moisture (hydroponics). Main prediction outputs: Temperature, Humidity, Weather, Light intensity, pH.
 """
 import requests
 import pandas as pd
@@ -28,7 +28,7 @@ YEAR_CHUNKS = [
     ("2023-01-01", "2023-12-31"),
     ("2024-01-01", "2024-12-31"),
     ("2025-01-01", "2025-12-31"),
-    ("2026-01-01", "2026-02-28"),
+    ("2026-01-01", "2026-03-31"),
 ]
 
 # Open-Meteo hourly parameters for better temperature/weather context
@@ -99,25 +99,6 @@ def add_temp_lags(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def generate_soil_moisture(df: pd.DataFrame) -> pd.DataFrame:
-    """Derive soil moisture from hourly precip + humidity (0–1)."""
-    np.random.seed(42)
-    rain = df["precipitation"].fillna(0).values
-    humidity = df["relative_humidity_2m"].fillna(70).values / 100
-
-    soil = []
-    prev = 0.55
-    for r, h in zip(rain, humidity):
-        noise = np.random.normal(0, 0.005)
-        value = 0.7 * prev + 0.2 * min(r / 5, 1) + 0.1 * h + noise
-        value = np.clip(value, 0.35, 0.65)
-        soil.append(value)
-        prev = value
-
-    df["kelembapan"] = soil
-    return df
-
-
 def generate_ph(df: pd.DataFrame) -> pd.DataFrame:
     """Slow drift in pH (6.0–7.0)."""
     np.random.seed(123)
@@ -141,11 +122,12 @@ def build_dataset():
         np.where(df["precipitation"] > 0.1, 1, 0)
     )
 
-    df = generate_soil_moisture(df)
     df = generate_ph(df)
 
-    # Rename temperature
+    # Rename temperature; add humidity (air, 0–1) and light_intensity (W/m²) for hydroponic lettuce
     df["suhu"] = df["temperature_2m"]
+    df["humidity"] = (df["relative_humidity_2m"].fillna(70) / 100).clip(0, 1)
+    df["light_intensity"] = df["shortwave_radiation"].fillna(0)
 
     # Derived features
     df = add_cyclical_time(df)
@@ -156,15 +138,14 @@ def build_dataset():
     df["dewpoint_2m"] = df["dewpoint_2m"].fillna(df["suhu"] - 2)
     df["surface_pressure"] = df["surface_pressure"].fillna(1013)
     df["cloud_cover"] = df["cloud_cover"].fillna(50)
-    df["shortwave_radiation"] = df["shortwave_radiation"].fillna(0)
     df["wind_speed_10m"] = df["wind_speed_10m"].fillna(0)
     df["wind_dir_sin"] = df["wind_dir_sin"].fillna(0)
     df["wind_dir_cos"] = df["wind_dir_cos"].fillna(0)
 
-    # Column order for CSV
+    # Column order for CSV (hydroponic: no soil moisture; humidity + light_intensity; precipitation for forecast)
     COLS = [
-        "time", "suhu", "cuaca", "kelembapan", "ph",
-        "dewpoint_2m", "surface_pressure", "cloud_cover", "shortwave_radiation",
+        "time", "suhu", "cuaca", "humidity", "light_intensity", "ph", "precipitation",
+        "dewpoint_2m", "surface_pressure", "cloud_cover",
         "wind_speed_10m", "wind_dir_sin", "wind_dir_cos",
         "hour_sin", "hour_cos", "doy_sin", "doy_cos",
         "temp_lag_24", "temp_lag_168",

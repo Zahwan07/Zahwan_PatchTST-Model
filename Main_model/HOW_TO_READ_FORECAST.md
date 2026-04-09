@@ -1,6 +1,6 @@
 # How to Read prediction_forecast.csv
 
-A plain-language guide to interpreting the numeric forecast.
+Guide for **hydroponic red leaf lettuce**. Columns: Temperature, Humidity, Weather, Light intensity, pH (no soil moisture).
 
 ---
 
@@ -9,37 +9,37 @@ A plain-language guide to interpreting the numeric forecast.
 | Column | What it is | How to read it | Good for lettuce? |
 |--------|------------|----------------|-------------------|
 | **time** | Date and hour of the prediction | `2026-02-21 08:00` = Feb 21, 2026, 8:00 AM | — |
-| **suhu** | Air temperature (°C) | 20 = mild, 25 = warm, 30+ = hot | 15–25°C ideal; avoid extremes |
-| **cuaca** | Weather code | **0** = clear, **1** = cloudy, **2** = rain | Clear (0) good for growth; rain (2) may need drainage |
-| **kelembapan** | Soil moisture (fraction 0–1) | 0.36 = 36%, 0.55 = 55% | **0.35–0.65** good; **0.55–0.60** ideal |
-| **ph** | Soil pH | 6.0–7.0 = neutral, good for most crops | **6.0–7.0** ideal; **~6.5** best for lettuce |
+| **suhu** | Air temperature (°C) | 20 = mild, 25 = warm, 30+ = hot | **18–24°C** ideal |
+| **cuaca** | Weather code | **0** = clear, **1** = cloudy, **2** = rain | Clear (0) good for light |
+| **humidity** | Air humidity (0–1) | 0.55 = 55% | **0.50–0.70** (50–70%) ideal |
+| **light_intensity** | Light (W/m²) | 0 = night, 200–500 = good, 800+ = strong sun | **150–600** W/m²; 6–8h sun or 12–16h LED |
+| **ph** | Hydroponic solution pH | 6.0–7.0 = good | **6.0–7.0** ideal; ~6.5 best |
 
 ---
 
-## Quick examples from your data
+## Quick examples
 
 | Row | Interpretation |
 |-----|----------------|
-| `suhu=19.7, cuaca=0, kelembapan=0.36, ph=6.60` | Cool clear morning (19.7°C), dry soil (36%), pH OK (6.6) |
-| `suhu=25.0, cuaca=0, kelembapan=0.35, ph=6.60` | Warm afternoon (25°C), soil a bit dry, pH OK |
-| `suhu=20.0, cuaca=2, kelembapan=0.50, ph=6.55` | Rainy (cuaca=2), moisture rising, pH OK |
+| `suhu=20, cuaca=0, humidity=0.55, light_intensity=350, ph=6.5` | Cool clear day, good humidity and light, pH OK |
+| `suhu=25, cuaca=1, humidity=0.65, light_intensity=200, ph=6.4` | Warm, cloudy, higher humidity, lower light |
+| `suhu=22, cuaca=2, humidity=0.70, light_intensity=50, ph=6.6` | Rainy, high humidity, low light |
 
 ---
 
-## For red leaf lettuce (your crop)
+## For hydroponic red leaf lettuce
 
-- **Temperature:** Best around 15–25°C; watch for cold (<10°C) or heat (>30°C)
-- **Soil moisture:** Keep between **0.35–0.65** (35–65%); **0.55–0.60** is ideal
-- **pH:** Keep between **6.0–7.0**; aim for ~6.5
-- **Weather:** Clear (0) is fine; rain (2) may need irrigation or drainage checks
+- **Temperature:** 18–24°C ideal
+- **Humidity:** 50–70% (0.50–0.70)
+- **Light:** 6–8 hours sunlight or 12–16 hours LED; ~150–600 W/m²
+- **pH:** 6.0–7.0 (nutrient solution)
+- **Weather:** Clear (0) good; rain (2) may affect humidity/light
 
 ---
 
-## Converting numbers mentally
+## Converting numbers
 
-- **kelembapan 0.36** → "36% soil moisture" → slightly dry
-- **kelembapan 0.55** → "55% soil moisture" → ideal
-- **ph 6.6** → "pH 6.6" → good for lettuce
-- **cuaca 0** → "Clear sky"
-- **cuaca 1** → "Cloudy"
-- **cuaca 2** → "Rain"
+- **humidity 0.55** → "55% air humidity"
+- **light_intensity 350** → "350 W/m²" (moderate light)
+- **ph 6.6** → good for lettuce
+- **cuaca 0** = Clear, **1** = Cloudy, **2** = Rain

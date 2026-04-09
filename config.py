@@ -1,20 +1,17 @@
 """
-Configuration for PatchTST plant growth prediction (final college project).
-Model predicts plant growth from these 4 input parameters:
-  - weather (cuaca)
-  - temperature (suhu)
-  - soil moisture (kelembapan)
-  - plant pH (ph)
+Configuration for PatchTST plant growth prediction (hydroponic red leaf lettuce).
+Model predicts from: temperature, weather, humidity, light intensity, pH.
 """
 # Feature column names (must match CSV columns)
-FEATURES = ["suhu", "cuaca", "kelembapan", "ph"]
-INPUT_DIM = len(FEATURES)  # 4
+FEATURES = ["suhu", "cuaca", "humidity", "light_intensity", "ph"]
+INPUT_DIM = len(FEATURES)  # 5
 
-# Sequence lengths
-INPUT_LEN = 24   # past timesteps per sample
-PRED_LEN = 7     # forecast 7 days (1 week) ahead
+# Sequence lengths (legacy / other scripts)
+INPUT_LEN = 24
+PRED_LEN = 7
 
-# Red leaf lettuce (Lactuca sativa L.) — optimal ranges for soil moisture & pH
-# See data/lettuce_reference.md for sources and details.
-LETTUCE_KELEMBAPAN_OPTIMAL = (0.35, 0.65)   # fraction 0–1; ideal band 0.55–0.60
-LETTUCE_PH_OPTIMAL = (6.0, 7.0)             # soil/substrate pH; ideal ~6.5
+# Red leaf lettuce (hydroponic) — optimal ranges for recommendations
+LETTUCE_TEMP_OPTIMAL = (18, 24)             # °C
+LETTUCE_HUMIDITY_OPTIMAL = (0.50, 0.70)     # air humidity 50–70%
+LETTUCE_LIGHT_OPTIMAL = (150, 600)          # W/m² (6–8h sun or 12–16h LED equivalent)
+LETTUCE_PH_OPTIMAL = (6.0, 7.0)             # hydroponic solution pH
