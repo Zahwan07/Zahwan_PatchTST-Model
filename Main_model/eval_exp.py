@@ -1,12 +1,15 @@
 """
-Evaluate saved Main_model checkpoint without training.
+Memory-safe evaluation for Multi_Model artifacts only.
 
-Loads: Main_model/patchtst_model_exp.pth + Main_model/preprocessor_exp.joblib
-Uses the same data split as train2.py (SEED=42, 80/20 train/val).
-Reports scaled MAE/MSE/RMSE/SMAPE and denormalized per-variable MAE/RMSE.
+Evaluates:
+  - 5 PatchTST regression models: MAE/MSE/RMSE/MAPE (scaled, target channel)
+  - 1 cuaca classifier: mean per-step accuracy
 
-Run from project root:  python Main_model/eval_exp.py
+Run from project root:
+  python Main_model/eval_exp.py
 """
+from __future__ import annotations
+
 import os
 import sys
 
@@ -16,117 +19,164 @@ if ROOT not in sys.path:
 
 import joblib
 import numpy as np
-import pandas as pd
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
 
 from model.patchtst_official import PatchTST_Official
-from utils import compute_metrics
-from Main_model.config_exp import INPUT_LEN, PRED_LEN
-from Main_model.preprocess import create_dataset
+from Multi_Model.datasets_multi import load_historical_df
+from Multi_Model.multi_config import (
+    FEATURES_BY_LABEL,
+    INPUT_LEN,
+    PATCH_LEN,
+    PRED_LEN,
+    REGRESSION_LABELS,
+    STRIDE,
+    artifacts_dir,
+    artifacts_for_label,
+)
+from Main_model.preprocessor import EnvironmentPreprocessor
 
 SEED = 42
-OUT_DIR = os.path.join(ROOT, "Main_model")
-MODEL_PATH = os.path.join(OUT_DIR, "patchtst_model_exp.pth")
-PREPROCESSOR_PATH = os.path.join(OUT_DIR, "preprocessor_exp.joblib")
-DATA_PATH = os.path.join(ROOT, "data", "historical_environment.csv")
-
-METRIC_CONT_COLS = [0, 1, 2, 3, 4]
-MAPE_COLS = [0, 1, 3]
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
-
-preprocessor = joblib.load(PREPROCESSOR_PATH)
-INPUT_DIM = preprocessor.n_features_in_
-
-df = pd.read_csv(DATA_PATH)
-data_scaled = preprocessor.transform(df)
-X, Y = create_dataset(data_scaled, input_len=INPUT_LEN, pred_len=PRED_LEN)
-
-X_tensor = torch.tensor(X, dtype=torch.float32)
-Y_tensor = torch.tensor(Y, dtype=torch.float32)
-
-torch.manual_seed(SEED)
-np.random.seed(SEED)
-n = len(X_tensor)
-idx = torch.randperm(n)
-train_end = int(0.8 * n)
-X_val = X_tensor[idx[train_end:]]
-Y_val = Y_tensor[idx[train_end:]]
-print(f"Validation samples: {len(X_val)} (same 80/20 split as train2.py, seed={SEED})")
-
 BATCH_SIZE = 256 if torch.cuda.is_available() else 64
-val_loader = DataLoader(
-    TensorDataset(X_val, Y_val),
-    batch_size=BATCH_SIZE,
-)
-
-model = PatchTST_Official(
-    input_dim=INPUT_DIM,
-    input_len=INPUT_LEN,
-    pred_len=PRED_LEN,
-    patch_len=16,
-    stride=8,
-    d_model=128,
-    n_heads=16,
-    num_layers=3,
-    dropout=0.2,
-    revin=True,
-).to(device)
-model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
-model.eval()
-
-criterion_mse = nn.MSELoss()
-
-val_loss_sum = 0.0
-val_preds, val_targets = [], []
-with torch.no_grad():
-    for xb, yb in val_loader:
-        xb, yb = xb.to(device), yb.to(device)
-        out = model(xb)
-        val_loss_sum += criterion_mse(out, yb).item()
-        val_preds.append(out)
-        val_targets.append(yb)
-
-val_out = torch.cat(val_preds, dim=0)
-Y_val_cat = torch.cat(val_targets, dim=0)
-val_loss_avg = val_loss_sum / len(val_loader)
-
-metrics = compute_metrics(
-    val_out, Y_val_cat,
-    continuous_cols=METRIC_CONT_COLS,
-    mape_cols=MAPE_COLS,
-)
-
-cont_names = preprocessor.continuous_cols_
-vo = val_out[:, :, :INPUT_DIM].reshape(-1, INPUT_DIM).detach().cpu().numpy()
-yo = Y_val_cat[:, :, :INPUT_DIM].reshape(-1, INPUT_DIM).detach().cpu().numpy()
-vo_raw = preprocessor.scaler_.inverse_transform(vo)
-yo_raw = preprocessor.scaler_.inverse_transform(yo)
 
 
-def _precip_to_cuaca(p):
-    return np.where(p > 0.5, 2, np.where(p > 0.1, 1, 0))
+def _make_val_indices(total_rows: int, input_len: int, pred_len: int, seed: int = SEED) -> np.ndarray:
+    n_samples = total_rows - input_len - pred_len
+    if n_samples <= 0:
+        raise ValueError("Not enough rows to build validation windows.")
+    rng = np.random.default_rng(seed)
+    perm = rng.permutation(n_samples)
+    train_end = int(0.8 * n_samples)
+    return perm[train_end:]
 
 
-pi = cont_names.index("precipitation") if "precipitation" in cont_names else None
-if pi is not None:
-    cuaca_match = (_precip_to_cuaca(vo_raw[:, pi]) == _precip_to_cuaca(yo_raw[:, pi])).mean() * 100.0
-else:
-    cuaca_match = float("nan")
+def _iter_xy_batches(data_scaled: np.ndarray, indices: np.ndarray, input_len: int, pred_len: int, batch_size: int):
+    for i in range(0, len(indices), batch_size):
+        bi = indices[i : i + batch_size]
+        xb = np.stack([data_scaled[j : j + input_len] for j in bi], axis=0)
+        yb = np.stack([data_scaled[j + input_len : j + input_len + pred_len] for j in bi], axis=0)
+        yield xb, yb
 
-print("\n--- Evaluation (saved model, validation set) ---")
-print(f"Model: {MODEL_PATH}")
-print(f"Loss (MSE, scaled): {val_loss_avg:.6f}")
-print(f"MAE:  {metrics['MAE']:.4f}  (scaled, channels 0–4)")
-print(f"MSE:  {metrics['MSE']:.6f}")
-print(f"RMSE: {metrics['RMSE']:.4f}")
-print(f"MAPE: {metrics['MAPE']:.2f}%  (SMAPE on suhu, humidity, ph — scaled)")
-print("\n--- Per-variable MAE / RMSE (denormalized) ---")
-for j, name in enumerate(cont_names):
-    err = vo_raw[:, j] - yo_raw[:, j]
-    print(f"  {name}: MAE={np.abs(err).mean():.4f}, RMSE={np.sqrt((err ** 2).mean()):.4f}")
-if pi is not None:
-    print(f"\nDerived cuaca match (from precip): {cuaca_match:.1f}%")
+
+def _evaluate_regression_label(label: str, df, val_indices: np.ndarray, device: torch.device):
+    features = FEATURES_BY_LABEL[label]
+    pre = EnvironmentPreprocessor(features=features, inverse_output="subset")
+    pre.fit(df)
+    data_scaled = pre.transform(df)
+
+    art = artifacts_for_label(ROOT, label)
+    if not os.path.isfile(art.model_path) or not os.path.isfile(art.preprocessor_path):
+        raise FileNotFoundError(f"Missing artifacts for '{label}'.")
+
+    model = PatchTST_Official(
+        input_dim=data_scaled.shape[-1],
+        input_len=INPUT_LEN,
+        pred_len=PRED_LEN,
+        patch_len=PATCH_LEN,
+        stride=STRIDE,
+        d_model=128,
+        n_heads=16,
+        num_layers=3,
+        dropout=0.2,
+        revin=True,
+    ).to(device)
+    model.load_state_dict(torch.load(art.model_path, map_location=device))
+    model.eval()
+
+    abs_sum = 0.0
+    sq_sum = 0.0
+    ape_sum = 0.0
+    n_elem = 0
+    eps = 1e-6
+
+    with torch.no_grad():
+        for xb_np, yb_np in _iter_xy_batches(
+            data_scaled=data_scaled,
+            indices=val_indices,
+            input_len=INPUT_LEN,
+            pred_len=PRED_LEN,
+            batch_size=BATCH_SIZE,
+        ):
+            xb = torch.tensor(xb_np, dtype=torch.float32, device=device)
+            yb = torch.tensor(yb_np, dtype=torch.float32, device=device)
+            out = model(xb)[:, :, 0]      # target channel only
+            tgt = yb[:, :, 0]
+            err = out - tgt
+
+            abs_sum += float(torch.abs(err).sum().item())
+            sq_sum += float((err ** 2).sum().item())
+            ape_sum += float((torch.abs(err) / torch.clamp(torch.abs(tgt), min=eps)).sum().item())
+            n_elem += err.numel()
+
+    mae = abs_sum / n_elem
+    mse = sq_sum / n_elem
+    rmse = float(np.sqrt(mse))
+    mape = 100.0 * (ape_sum / n_elem)
+    return mae, mse, rmse, mape, len(features)
+
+
+def _evaluate_cuaca(df, val_indices: np.ndarray):
+    art = artifacts_for_label(ROOT, "cuaca")
+    if not os.path.isfile(art.model_path) or not os.path.isfile(art.preprocessor_path):
+        raise FileNotFoundError("Missing cuaca artifacts.")
+
+    features = FEATURES_BY_LABEL["cuaca"]
+    pre = joblib.load(art.preprocessor_path)
+    clf = joblib.load(art.model_path)
+    data_scaled = pre.transform(df)
+
+    if "precipitation" not in df.columns:
+        raise ValueError("Dataset must contain 'precipitation' to derive cuaca labels.")
+    p = df["precipitation"].to_numpy(dtype=float)
+    y_cuaca = np.where(p > 0.5, 2, np.where(p > 0.1, 1, 0)).astype(np.int64)
+
+    correct = 0
+    total = 0
+    cls_batch_size = max(16, BATCH_SIZE // 2)
+    for i in range(0, len(val_indices), cls_batch_size):
+        start_indices = val_indices[i : i + cls_batch_size]
+        xb_np = np.stack([data_scaled[j : j + INPUT_LEN] for j in start_indices], axis=0)
+        y_true = np.stack(
+            [y_cuaca[j + INPUT_LEN : j + INPUT_LEN + PRED_LEN] for j in start_indices],
+            axis=0,
+        )
+        y_hat = clf.predict(xb_np.reshape(xb_np.shape[0], -1))
+        correct += int((y_hat == y_true).sum())
+        total += int(y_true.size)
+
+    acc = (correct / total) * 100.0 if total > 0 else float("nan")
+    return acc, len(features)
+
+
+def main():
+    multi_dir = artifacts_dir(ROOT)
+    if not os.path.isdir(multi_dir):
+        print(f"Multi-model artifacts directory not found: {multi_dir}")
+        return
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+    print("\n" + "=" * 72)
+    print("--- Evaluation (Multi_Model only: 5 regression + cuaca classifier) ---")
+    print(f"Artifacts dir: {multi_dir}")
+    print("=" * 72)
+
+    df = load_historical_df()
+    val_indices = _make_val_indices(len(df), INPUT_LEN, PRED_LEN, seed=SEED)
+    print(f"Validation samples: {len(val_indices)} (80/20 split, seed={SEED})")
+
+    for label in REGRESSION_LABELS:
+        try:
+            mae, mse, rmse, mape, n_feats = _evaluate_regression_label(label, df=df, val_indices=val_indices, device=device)
+            print(f"[{label}] scaled: MAE={mae:.4f} MSE={mse:.6f} RMSE={rmse:.4f} MAPE={mape:.2f}% | feats={n_feats}")
+        except Exception as e:
+            print(f"[{label}] evaluation skipped: {e}")
+
+    try:
+        acc, n_feats = _evaluate_cuaca(df=df, val_indices=val_indices)
+        print(f"[cuaca] mean per-step accuracy: {acc:.2f}% | feats={n_feats}")
+    except Exception as e:
+        print(f"[cuaca] evaluation skipped: {e}")
+
+
+if __name__ == "__main__":
+    main()

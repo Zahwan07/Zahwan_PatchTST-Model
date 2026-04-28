@@ -4,7 +4,8 @@ Output: data/historical_environment.csv for hydroponic red leaf lettuce.
 
 Features:
 - From API: temperature_2m, relative_humidity_2m, dewpoint_2m, surface_pressure,
-  cloud_cover, shortwave_radiation, wind_speed_10m, wind_direction_10m, precipitation
+  cloud_cover, shortwave_radiation, wind_speed_10m, wind_direction_10m, precipitation,
+  weather_code
 - Derived: cuaca (weather), humidity (air, 0–1), light_intensity (shortwave W/m²), ph,
   wind_dir_sin/cos, hour_sin/cos, doy_sin/cos, temp_lag_24/168.
 
@@ -35,7 +36,7 @@ YEAR_CHUNKS = [
 HOURLY_PARAMS = (
     "temperature_2m,relative_humidity_2m,dewpoint_2m,"
     "surface_pressure,cloud_cover,shortwave_radiation,"
-    "wind_speed_10m,wind_direction_10m,precipitation"
+    "wind_speed_10m,wind_direction_10m,precipitation,weather_code"
 )
 
 
@@ -139,13 +140,14 @@ def build_dataset():
     df["surface_pressure"] = df["surface_pressure"].fillna(1013)
     df["cloud_cover"] = df["cloud_cover"].fillna(50)
     df["wind_speed_10m"] = df["wind_speed_10m"].fillna(0)
+    df["weather_code"] = df["weather_code"].fillna(0)
     df["wind_dir_sin"] = df["wind_dir_sin"].fillna(0)
     df["wind_dir_cos"] = df["wind_dir_cos"].fillna(0)
 
     # Column order for CSV (hydroponic: no soil moisture; humidity + light_intensity; precipitation for forecast)
     COLS = [
         "time", "suhu", "cuaca", "humidity", "light_intensity", "ph", "precipitation",
-        "dewpoint_2m", "surface_pressure", "cloud_cover",
+        "dewpoint_2m", "surface_pressure", "cloud_cover", "weather_code",
         "wind_speed_10m", "wind_dir_sin", "wind_dir_cos",
         "hour_sin", "hour_cos", "doy_sin", "doy_cos",
         "temp_lag_24", "temp_lag_168",
