@@ -1,7 +1,7 @@
 """
 Multi-model configuration (6 models total at inference):
 - 5 PatchTST regression models (train_multi.py): suhu, humidity, light_intensity, ph, precipitation
-- 1 cuaca classifier sklearn (train_cuaca.py): 3 classes (clear/cloudy/rain), multi-step (PRED_LEN steps)
+- 1 cuaca PatchTST classifier (train_cuaca.py): 3 classes (clear/cloudy/rain), multi-step (PRED_LEN steps)
 
 This module centralizes:
 - feature subset per label (FEATURES_BY_LABEL)
@@ -144,7 +144,7 @@ def artifacts_for_label(project_root: str, label: str) -> Artifacts:
     if label == "cuaca":
         return Artifacts(
             label=label,
-            model_path=os.path.join(out, "cuaca_clf.joblib"),
+            model_path=os.path.join(out, "patchtst_cuaca.pth"),
             preprocessor_path=os.path.join(out, "preprocessor_cuaca.joblib"),
         )
     raise KeyError(f"Unknown label: {label}")

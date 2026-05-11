@@ -1,6 +1,11 @@
 """
 Cuaca classifier for Multi_Model.
 
+REFERENCE-ONLY (legacy sklearn path):
+  This module is no longer part of the primary active workflow.
+  Main pipeline now uses PatchTST cuaca training inside:
+    python Multi_Model/train_multi.py
+
 We treat cuaca as a 3-class classification problem (0 clear, 1 cloudy, 2 rain),
 and predict multi-step horizon (PRED_LEN steps) using a MultiOutputClassifier.
 

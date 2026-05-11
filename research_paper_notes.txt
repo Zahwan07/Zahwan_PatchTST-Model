@@ -1,0 +1,1511 @@
+================================================================================
+  CATATAN PENELITIAN — draf/penyuntingan (ModelTA)
+  File ini dapat ditambah per bab. Bagian paling bawah = draf Bab 3 terbaru.
+================================================================================
+
+
+--------------------------------------------------------------------------------
+--- Bab 3 - Metodologi CRISP-DM (draf disarankan, selaras pipeline ModelTA) ---
+--------------------------------------------------------------------------------
+
+Bab ini menjelaskan langkah-langkah penelitian dengan kerangka CRISP-DM (Cross-
+Industry Standard Process for Data Mining) yang terdiri dari enam tahapan,
+yaitu Business Understanding, Data Understanding, Data Preparation, Modeling,
+Evaluation, dan Deployment. CRISP-DM dipilih karena bersifat sistematis,
+terstruktur, dan iteratif sehingga mendukung pengembangan model prediksi deret
+waktu. Alur keseluruhan penelitian diilustrasikan pada Gambar 3. Secara ringkas,
+tahapan setelah pemahaman bisnis dipetakan ke artefak proyek sebagai berikut:
+Data Understanding dan pengumpulan data melalui skrip pengambilan data historis;
+Data Preparation meliputi normalisasi fitur per variabel, pembentukan jendela
+geser (sliding window), dan pemisahan data; Modeling menggunakan enam model
+PatchTST terpisah; Evaluation memanfaatkan metrik pada data historis dengan
+pembagian validasi; Deployment mencakup interpretasi hasil (misalnya LLM) dan
+antarmuka sederhana.
+
+--------------------------------------------------------------------------------
+3.1  Business Understanding (Pemahaman bisnis)
+--------------------------------------------------------------------------------
+
+Penelitian ini berfokus pada pertanian terkontrol, khususnya budidaya selada
+merah (Lactuca sativa L.) secara hidroponik di wilayah Bandung, di mana
+pengelolaan lingkungan tumbuh memerlukan informasi tidak hanya deskriptif,
+melainkan prediktif untuk perencanaan lebih awal. Permasalahan yang diidentifikasi
+meliputi keterbatasan pemantauan konvensional yang cenderung bersifat reaktif
+serta kebutuhan perkiraan kondisi lingkungan untuk horizon waktu lebih panjang
+agar keputusan operasional (penyesuaian iklim mikro, irigasi, atau perlindungan)
+dapat dipersiapkan secara proaktif.
+
+--------------------------------------------------------------------------------
+3.1.1  Identifikasi masalah
+--------------------------------------------------------------------------------
+
+Permasalahan utama adalah kurangnya sistem yang secara konsisten menyediakan
+ramalan multi-variabel kondisi lingkungan untuk horizon jangka panjang (per jam)
+yang dapat mendukung pengambilan keputusan budidaya. Pemantauan yang hanya
+menampilkan keadaan terkini tanpa proyeksi ke depan membuat mitigasi risiko
+(keterlaluan suhu, kekeringan relatif udara, atau kondisi basah) dilakukan
+setelah gejala muncul. Oleh karena itu, penelitian ini mengembangkan model
+prediksi deret waktu berbasis Patch Time Series Transformer (PatchTST) dengan
+pendekatan multi-model pada variabel lingkungan utama yang relevan dengan
+hidroponik.
+
+--------------------------------------------------------------------------------
+3.1.2  Tujuan penelitian
+--------------------------------------------------------------------------------
+
+Tujuan utama adalah merancang dan mengimplementasikan sistem peramalan kondisi
+lingkungan untuk horizon 30 hari (720 langkah per jam) yang meliputi suhu udara,
+kelas cuaca (kering/berawan/hujan), kelembaban relatif udara, intensitas cahaya
+matahari (proxy radiasi gelombang pendek), pH larutan, serta curah hujan jam-
+an. Dengan PatchTST yang diadaptasi dari implementasi resmi, diharapkan model
+dapat menangkap dependensi jangka panjang pada data per jam. Secara ilmiah,
+penelitian ini juga menguji apakah arsitektur berbasis perhatian (attention)
+dengan pemecahan patch memberikan kinerja yang kompetitif dibandingkan baseline
+deret waktu klasik (misalnya LSTM atau ARIMA) pada data pertumbuhan tanaman
+terkontrol, sesuai metrik evaluasi yang ditetapkan.
+
+--------------------------------------------------------------------------------
+3.1.3  Studi kebutuhan data
+--------------------------------------------------------------------------------
+
+Pada tahap ini ditetapkan jenis dan karakteristik data agar selaras dengan
+tujuan peramalan. Variabel lingkungan yang digunakan bersumber dari arsip cuaca
+terbuka (Open-Meteo) untuk lokasi studi, meliputi antara lain suhu, kelembaban
+relatif udara, radiasi, angin, tekanan, tutupan awan, serta curah hujan dan
+kode cuaca, kemudian diolah menjadi deret waktu per jam dengan fitur turunan
+(siklus waktu, arah angin, lag suhu). Variabel pH dimodelkan sebagai deret
+kontrol lambat yang konsisten dengan asumsi budidaya hidroponik pada penelitian
+ini. Persyaratan utama data adalah kontinuitas temporal, resolusi jam-an, dan
+cakupan musiman yang cukup untuk pelatihan PatchTST dengan jendela masukan
+satu minggu (168 jam) dan horizon keluaran satu bulan (720 jam). Studi literatur
+dan penyesuaian dengan konfigurasi sensor/aktuator di rumah kaca dapat digunakan
+untuk memastikan relevansi variabel; validasi silang tambahan dengan data
+sensor lapangan atau IoT dapat dilakukan apabila dataset tersebut tersedia dan
+terkalibrasi.
+
+--------------------------------------------------------------------------------
+3.1.4  Rencana eksperimen
+--------------------------------------------------------------------------------
+
+Rencana eksperimen menggambarkan alur dari pengumpulan data hingga tahap
+penerapan, sebagai berikut.
+
+1. Pengumpulan dataset: mengunduh data historis per jam melalui API arsip cuaca
+   terbuka dan menyatukannya menjadi satu berkas deret waktu (CSV) sebagai
+   sumber tunggal pelatihan dan inferensi.
+
+2. Pra-pemrosesan data: pembersihan dan konsistensi deret waktu, normalisasi
+   fitur per subset variabel (per model), pembentukan jendela geser dengan
+   panjang masukan dan horizon keluaran tetap, serta pembagian data untuk
+   pelatihan dan validasi.
+
+3. Pemodelan: melatih enam model PatchTST terpisah—lima untuk regresi variabel
+   kontinu/kategori terkodifikasi numerik dan satu untuk klasifikasi multi-langkah
+   kelas cuaca—lalu menyimpan bobot model dan preprocessor ke direktori artefak.
+
+4. Evaluasi: mengukur kinerja pada data historis dengan pemisahan validasi,
+   menggunakan metrik regresi (misalnya MAE, RMSE, MAPE pada saluran sasaran)
+   untuk model regresi dan metrik ketepatan klasifikasi pada langkah waktu
+   untuk model cuaca. Perbandingan langsung dengan pengamatan sensor IoT
+   realtime dapat ditambahkan sebagai langkah opsional bila data tersebut ada.
+
+5. Deployment: menerjemahkan keluaran numerik menjadi ringkasan deskriptif
+   (misalnya melalui model bahasa besar/LLM) dan menampilkannya pada antarmuka
+   sederhana bagi pengguna akhir.
+
+================================================================================
+Akhir blok Bab 3.1 (draf disarankan)
+================================================================================
+
+
+--------------------------------------------------------------------------------
+3.2  Data Understanding (Pemahaman data)
+--------------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------------
+3.2.1  Pengumpulan dataset
+--------------------------------------------------------------------------------
+
+Dataset disusun sebagai deret waktu multivariat berbasis sumber meteorologi terbuka.
+Sumber utama adalah Open-Meteo Archive API untuk titik studi di sekitar Bandung
+(wilayah Dago dapat dipetakan ke koordinat tetap penelitian: lintang −6,8783°,
+bujur 107,6219°) dengan resolusi per jam. Pengambilan data dilakukan per potongan
+tahunan (chunk) untuk mengurangi risiko pembatasan permintaan API dan memudahkan
+validasi per periode; potongan tersebut kemudian digabung menjadi satu berkas
+`data/historical_environment.csv`. Rentang waktu pada implementasi kode mengikuti
+daftar chunk (2020–2025 penuh serta Januari–April 2026); pada naskah Anda dapat
+menyatakan rentang efektif “hingga data terakhir yang berhasil diunduh” agar
+selalu konsisten dengan CSV yang dilampirkan.
+
+Open-Meteo dipilih karena menyediakan arsip per jam yang relatif panjang, format
+konsisten, dan parameter yang relevan untuk konteks hidroponik (suhu udara,
+kelembaban, radiasi, angin, curah hujan, dan lain-lain).
+
+Untuk tahap deployment, sistem dapat memanfaatkan berkas pemantauan aktual
+misalnya `data/realtime_data.csv` (jika tersedia di lingkungan operasi) sebagai
+“snapshot” kondisi terkini pada antarmuka dan memadukannya dengan keluaran
+ramalan model. Dengan demikian, pelatihan tetap berbasis data historis arsip,
+sementara tampilan kepada pengguna dapat memuat konteks observasi terbaru.
+
+
+--------------------------------------------------------------------------------
+3.2.2  Eksplorasi data
+--------------------------------------------------------------------------------
+
+Setelah penggabungan chunk, dilakukan eksplorasi awal untuk memahami kualitas dan
+pol struktur deret waktu. Langkah tipis meliputi pemeriksaan kelengkapan indeks
+waktu, duplikasi timestamp, serta proporsi nilai hilang; visualisasi variabel
+utama (suhu, kelembaban relatif udara, radiasi/intensitas cahaya) membantu
+melihat pola harian dan musiman.
+
+Secara umum, data per jam menunjukkan fluktuasi siang–malam yang jelas pada
+suhu dan radiasi, serta variasi musiman yang lebih lambat. Setelah pembersihan
+dan pengurutan kronologis, deret cenderung siap diproses lebih lanjut (normalisasi
+dan pembentukan jendela geser) dengan asumsi bahwa anomali ekstrem telah
+ditangani sesuai kebijakan pembersihan yang Anda dokumentasikan di bab data.
+
+
+--------------------------------------------------------------------------------
+3.2.3  Label dan target peramalan
+--------------------------------------------------------------------------------
+
+Permintaan ke endpoint Open-Meteo dilakukan otomatis melalui skrip pengambilan
+data; parameter permintaan diselaraskan dengan kebutuhan fitur di pipeline
+(model multi-keluaran). Timezone ditetapkan ke Asia/Jakarta agar timestamp
+selaras dengan konteks lokal. Hasil tiap chunk digabung, diurutkan menurut
+waktu, dan dideduplikasi berdasarkan indeks waktu bila perlu.
+
+Target ramalan yang ditulis ke keluaran utama (sesuai konfigurasi proyek)
+meliputi:
+
+  - suhu — suhu udara (°C).
+  - humidity — kelembaban relatif udara (skala 0–1 setelah normalisasi/penyimpanan
+    pada pipeline Anda).
+  - light_intensity — proxy intensitas cahaya/radiasi gelombang pendek (W/m²).
+  - ph — pH larutan/media hidroponik (deret kontrol lambat).
+  - precipitation — curah hujun per jam (mm).
+  - cuaca — kelas kondisi cuaca (0 cerah, 1 berawan, 2 hujan) untuk komunikasi
+    pengguna; pada pelatihan, label cuaca diturunkan dari presipitasi observasi
+    dengan ambang tetap (selaras dengan skrip dataset), sementara satu model
+    PatchTST khusus dilatih sebagai klasifikator multi-langkah pada horizon yang
+    sama dengan model regresi. Pada inferensi, keluaran cuaca dapat dipadukan
+    dengan sinyal regresi curah hujun agar konsistensi naratif terjaga (sesuai
+    implementasi `predict_multi`).
+
+Variabel `weather_code` dari API dapat dipakai sebagai fitur masukan klasifikator
+cuaca tanpa harus menjadi satu-satunya definisi label, sehingga model tetap
+terlatih pada representasi yang stabil.
+
+
+--------------------------------------------------------------------------------
+3.2.4  Variabel dan parameter data
+--------------------------------------------------------------------------------
+
+Variabel inti dari API (contoh penamaan Open-Meteo) dan peran konseptualnya:
+
+  - temperature_2m — pembentuk utama variabel suhu.
+  - relative_humidity_2m — sumber variabel humidity; mendukung hubungan suhu–uap
+    air, terutama pada malam dan pagi hari.
+  - dewpoint_2m — titik embun; memperkaya informasi kelembaban efektif.
+  - surface_pressure — tekanan permukaan; indikator dinamika atmosfer skala
+    sinoptik.
+  - cloud_cover — tutupan awan; berkorelasi dengan radiasi masuk dan fluktuasi
+    suhu siang hari.
+  - shortwave_radiation — radiasi gelombang pendek; dasar pembentukan
+    light_intensity dan pola termal harian.
+  - wind_speed_10m — kecepatan angin; menangkap adveksi massa udara.
+  - wind_direction_10m — diubah menjadi representasi siklik (wind_dir_sin,
+    wind_dir_cos) agar arah 0°/360° kontinu untuk model.
+  - precipitation — curah hujun per jam; dasar label cuaca diskret pada tahap
+    pembelajaran dan referensi fisika cuaca.
+  - weather_code — kode cuaca numerik dari penyedia; dipakai sebagai fitur
+    tambahan pada model cuaca.
+
+Fitur turunan yang umum ada pada CSV hasil praproses meliputi: siklus waktu
+(hour_sin, hour_cos, doy_sin, doy_cos), lag suhu (temp_lag_24, temp_lag_168),
+serta variabel hasil transformasi lain yang tercantum pada daftar fitur proyek.
+
+Pada arsitektur saat ini, lima target kontinu/utama diregresikan dengan model
+PatchTST terpisah per variabel sasaran, dan kelas cuaca dimodelkan dengan model
+PatchTST klasifikasi terpisah (bukan hanya “pasca-pemrosesan” dari presipitasi
+tanpa model), sehingga bab metodologi perlu menyatakan secara eksplisit adanya
+enam kepala model.
+
+
+--------------------------------------------------------------------------------
+3.2.5  Karakteristik data
+--------------------------------------------------------------------------------
+
+Ringkasan karakteristik yang relevan untuk pemodelan:
+
+1. Multivariat per jam — banyak variabel diukur bersamaan setiap jam; memungkinkan
+   model memanfaatkan korelasi silang (misalnya radiasi–suhu).
+2. Periodisitas harian — pola siang–malam kuat; fitur siklik jam dan lag 24 jam
+   membantu mempertahankan bentuk gelombang harian pada horizon panjang.
+3. Variasi musiman — tren bulanan/tahunan lebih halus; fitur siklik hari dalam
+   tahun (doy) membantu tanpa memaksa diskontinuitas antar musim.
+4. Heterogenitas satuan — °C, mm, W/m², dan skala 0–1; normalisasi per fitur
+   (melalui preprocessor per model) penting sebelum pelatihan PatchTST.
+5. Horizon panjang (720 jam) — menuntut stabilitas prediksi; lag 168 jam
+   memberi memori mingguan eksplisit.
+6. Kebutuhan interpretasi pengguna — kelas cuaca diskret melengkapi keluaran
+   kontinu agar rekomendasi berbasis LLM lebih komunikatif, tanpa mengorbankan
+   landasan numerik regresi curah hujun.
+
+================================================================================
+Akhir penambahan Bab 3.2–3.2.5 (draf disarankan)
+================================================================================
+
+
+--------------------------------------------------------------------------------
+3.3  Data Preparation (Pra-pemrosesan data)
+--------------------------------------------------------------------------------
+
+Tahap pra-pemrosesan menjadikan deret waktu multivariat siap dipelajari oleh
+model PatchTST. Secara konseptual, data dibersihkan dan diselaraskan secara
+temporal, fitur kontinu dinormalisasi agar skala sebanding, deret diubah menjadi
+pasangan urutan masukan–horizon keluaran dengan sliding window, dan pembagian
+data latih/validasi dilakukan pada sampel jendela. Pembagian menjadi patch
+temporal merupakan bagian internal arsitektur PatchTST (bukan berkas terpisah
+sebelum pelatihan). Pada implementasi proyek ini, sebagian besar transformasi
+kolom deret (penggabungan chunk, fitur turunan, pengisian nilai awal lag, serta
+beberapa pengisian NaN bawaan API) dilakukan pada skrip pengambilan data;
+normalisasi skala dan pembentukan jendela dilakukan pada modul dataset multi-model.
+
+
+--------------------------------------------------------------------------------
+3.3.1  Penggabungan data
+--------------------------------------------------------------------------------
+
+Data historis diunduh per segmen tahunan dari Open-Meteo Archive API, lalu
+digabung menjadi satu kerangka data. Tahap penggabungan mencakup konkatenasi
+baris dari seluruh segmen, penghapusan duplikasi berdasarkan kolom waktu
+(`time`), dan pengurutan kronologis naik. Hasil akhir disimpan sebagai berkas
+tunggal `data/historical_environment.csv` yang menjadi sumber latihan dan inferensi
+bagi keenam model.
+
+
+--------------------------------------------------------------------------------
+3.3.2  Data cleaning
+--------------------------------------------------------------------------------
+
+Pembersihan bertujuan menjaga kontinuitas temporal dan konsistensi tipe data.
+Langkah yang selaras dengan implementasi meliputi: (i) validasi dan urutan
+timestamp unik setelah penggabungan; (ii) pengisian nilai hilang selektif pada
+variabel meteorologi (misalnya nilai default atau turunan sederhana untuk
+tekanan, tutupan awan, kecepatan angin, titik embun relatif terhadap suhu, dan
+normalisasi humidity); (iii) penanganan awal deret untuk fitur lag suhu dengan
+masking baris awal yang tidak memiliki histori cukup, diikuti pengisian mundur
+(`bfill`) dan cadangan ke nilai suhu awal agar tidak terputus; (iv) pemeriksaan
+rentang masuk akal untuk variabel utama (misalnya `clip` humidity ke [0,1]).
+Pembersihan “nilai ekstrem error sensor” dapat Anda jabarkan jika ada logika
+tambahan di luar skrip standar; pada pipeline bawaan, penekanan utama adalah
+konsistensi API dan kelengkapan deret per jam.
+
+
+--------------------------------------------------------------------------------
+3.3.3  Feature engineering
+--------------------------------------------------------------------------------
+
+Fitur turunan ditambahkan untuk memperjelas periodisitas dan ketergantungan
+temporal: (1) encoding siklik waktu (`hour_sin`, `hour_cos`, `doy_sin`, `doy_cos`)
+agar keterdekatan jam 23 dan jam 0, serta hari dalam tahun, direpresentasikan
+secara kontinu; (2) transformasi siklik arah angin menjadi `wind_dir_sin` dan
+`wind_dir_cos`; (3) lag suhu `temp_lag_24` dan `temp_lag_168` sebagai memori
+eksplisit autokorelasi harian dan mingguan; (4) variabel `cuaca` diskret (0/1/2)
+yang diturunkan dari curah hujun per jam dengan ambang tetap; (5) variabel
+`ph` sebagai deret kontrol lambat; (6) penamaan variabel target hidroponik
+(`suhu`, `humidity`, `light_intensity`) dari kolom API asli. Fitur `weather_code`
+disimpan untuk digunakan sebagai masukan model klasifikasi cuaca.
+
+
+--------------------------------------------------------------------------------
+3.3.4  Data normalization
+--------------------------------------------------------------------------------
+
+Karena satuan antarparameter berbeda (°C, mm, W/m², tekanan, rasio 0–1, dll.),
+dilakukan standardisasi fitur kontinu. Pada arsitektur multi-model, setiap label
+memiliki subset fitur sendiri (`FEATURES_BY_LABEL`); `EnvironmentPreprocessor`
+mem-fit `StandardScaler` pada subset kolom tersebut terhadap keseluruhan deret
+historis yang tersedia, lalu mentransformasi deret sebelum pembentukan jendela.
+Hal ini berbeda dari skenario “satu vektor fitur besar tunggal” untuk semua
+variabel sekaligus: di sini normalisasi bersifat **per model** agar setiap
+PatchTST hanya menerima saluran yang relevan dengan tugasnya.
+
+Secara matematis, untuk setiap saluran kontinu pada subset fitur,
+x' = (x − μ) / σ dengan μ dan σ diestimasi dari data latih yang dipakai saat
+`fit` pada deret historis. Pada inferensi, parameter normalisasi yang sama
+digunakan kembali; keluaran model diregresikan dalam ruang terstandarisasi,
+kemudian **inverse transform** mengembalikan prediksi ke satuan asli (misalnya
+°C, mm, W/m²) agar dapat diinterpretasikan di lapangan.
+
+
+--------------------------------------------------------------------------------
+3.3.5  Sliding window
+--------------------------------------------------------------------------------
+
+Deret yang telah dinormalisasi per fitur subset diubah menjadi sampel supervisi
+dengan jendela geser. Panjang masukan dan horizon mengikuti konfigurasi proyek:
+**INPUT_LEN = 168 jam** (satu minggu konteks) dan **PRED_LEN = 720 jam** (sekitar
+satu bulan ke depan). Untuk regresi, setiap sampel memiliki bentuk
+X_i ∈ R^{168×D_ℓ} dan Y_i ∈ R^{720×D_ℓ} dengan D_ℓ jumlah saluran subset label ℓ.
+Untuk klasifikasi cuaca, X_i berdimensi sama sedangkan Y_i ∈ {0,1,2}^{720}
+menyimpan kelas per jam hasil penurunan dari presipitasi historis.
+
+Pembentukan jendela mengikuti indeks i yang valid sehingga seluruh segmen target
+720 jam masih berada dalam rentang data yang tersedia. Keuntungan sliding window
+adalah penambahan jumlah sampel efektif, pemeliharaan struktur temporal lokal,
+dan dukungan evaluasi ramalan multi-langkah.
+
+
+--------------------------------------------------------------------------------
+3.3.6  Pemisahan data dan patching temporal
+--------------------------------------------------------------------------------
+
+**Pemisahan train/validasi** dilakukan setelah sampel jendela terbentuk: indeks
+sampel diacak, lalu sekitar 80% digunakan untuk pelatihan dan 20% untuk validasi
+(dengan benih acak tetap agar dapat direplikasi). Pemisahan ini berlaku terpisah
+untuk setiap model agar metrik validasi mencerminkan generalisasi pada pola
+jendela yang sama.
+
+**Patching temporal** (patch_len, stride) merupakan langkah **internal** pada
+backbone PatchTST: urutan masukan 168 jam dipecah menjadi token patch sebelum
+lapisan Transformer, sehingga model memproses representasi multi-skala temporal.
+Parameter patch (misalnya panjang patch dan stride) dikonfigurasi bersama
+hyperparameter model pada skrip pelatihan dan tidak menghasilkan berkas deret
+“ter-patch” terpisah di tahap pra-pemrosesan.
+
+================================================================================
+Akhir penambahan Bab 3.3–3.3.6 (draf disarankan)
+================================================================================
+
+
+--------------------------------------------------------------------------------
+3.4  Modelling (Pemodelan)
+--------------------------------------------------------------------------------
+
+Tahap pemodelan merancang dan melatih model prediksi deret waktu berbasis
+pembelajaran dalam untuk memetakan hubungan temporal antar variabel lingkungan.
+Pada penelitian ini, **masukan latihan** bersumber dari deret historis per jam
+yang telah melalui pra-pemrosesan (bukan aliran sensor IoT sebagai sumber utama
+dataset latih), sedangkan data observasi lapangan/IoT—jika ada—lebih relevan
+pada tahap **deployment** atau validasi silang tambahan.
+
+Secara konseptual, setiap model memproses jendela masukan 168 jam yang telah
+dinormalisasi, melalui **temporal patching** internal, **embedding** token patch,
+**Transformer encoder** (self-attention), lalu **kepala ramalan (forecast head)**.
+Pelatihan mengikuti siklus: pembentukan dataset supervisi berbasis jendela geser,
+pemisahan latih/validasi, inisialisasi PatchTST, optimisasi dengan fungsi kerugian
+sesuai tugas (regresi vs klasifikasi), pemantauan metrik pada validasi, serta
+penyimpanan bobot terbaik. Pemilihan PatchTST didasarkan pada kemampuan attention
+menangkap dependensi jarak jauh pada token patch (efisien dibanding attention per
+timestep penuh) dan pada penggunaan **RevIN** pada implementasi resmi untuk
+menstabilkan variasi skala deret.
+
+
+--------------------------------------------------------------------------------
+3.4.1  Arsitektur PatchTST dan skenario multi-model
+--------------------------------------------------------------------------------
+
+Implementasi mengacu pada PatchTST resmi (Nie et al.) melalui modul
+`model/patchtst_official.py`. Terdapat **enam model terpisah**: lima regresi
+PatchTST—masing-masing memprediksi horizon **720 jam** untuk subset fitur
+terkait (keluaran berdimensi sama dengan saluran masukan subset)—dan satu
+model klasifikasi **CuacaPatchTST** yang memakai backbone PatchTST yang sama
+dengan **kepala linear** tiga kelas pada setiap langkah waktu horizon (logit
+kelas cuaca per jam).
+
+Secara umum, encoder memproses token hasil patching; regresi memetakan representasi
+ke vektor keluaran multi-langkah multi-saluran sesuai implementasi resmi,
+sementara cabang cuaca memproyeksikan representasi per jam ke tiga skor kelas.
+Hyperparameter seperti `d_model`, jumlah kepala, kedalaman encoder, serta
+`patch_len` dan `stride` ditetapkan pada skrip pelatihan (nilai bawaan proyek:
+`patch_len=16`, `stride=8`, `d_model=128`, dan konfigurasi terkait lainnya pada
+`Multi_Model/train_multi.py` / `multi_config.py`).
+
+
+--------------------------------------------------------------------------------
+3.4.2  Temporal patching dan embedding
+--------------------------------------------------------------------------------
+
+Berbeda dengan Transformer yang memproses setiap timestep mentah secara utuh,
+PatchTST memecah urutan masukan 168 jam menjadi **patch** berurutan dengan
+panjang patch \(L_p\) dan stride \(s\) (pada proyek ini **16 jam** dan **8 jam**).
+Patching merangkum pola lokal (misalnya transisi pagi–siang) dan **mengurangi**
+jumlah token yang masuk mekanisme self-attention, sehingga lebih efisien dan
+cenderung mengurangi noise frekuensi tinggi yang kurang relevan untuk tren
+jangka panjang.
+
+Setelah patch terbentuk, setiap token diproyeksikan ke ruang embedding berdimensi
+tetap (`d_model`) sebelum masuk lapisan encoder.
+
+
+--------------------------------------------------------------------------------
+3.4.3  Transformer encoder
+--------------------------------------------------------------------------------
+
+Encoder terdiri dari susunan lapisan multi-head self-attention dan jaringan
+pakan-depan (sesuai implementasi PatchTST-main). Self-attention memungkinkan
+setiap token patch berinteraksi dengan token lain sehingga model memadukan pola
+lokal dan konteks mingguan yang lebih luas. Dibanding arsitektur rekurensi,
+Transformer umumnya menghindari bottleneck informasi sekuensial meskipun dengan
+harga komputasi per lapisan; pada PatchTST, beban tersebut dikendalikan lewat
+patching.
+
+
+--------------------------------------------------------------------------------
+3.4.4  Forecast head (regresi vs klasifikasi)
+--------------------------------------------------------------------------------
+
+Pada **lima model regresi**, kepala ramalan resmi memetakan representasi patch
+menjadi keluaran berbentuk **(batch, 720, D_ℓ)** dalam ruang terstandarisasi,
+dengan D_ℓ jumlah saluran subset label; saluran indeks nol adalah **sasaran
+regresi utama** yang ditekankan pada fungsi kerugian (MSE berpembobot saluran).
+
+Pada **model cuaca**, kepala akhir adalah lapisan linear yang menghasilkan **logit
+tiga kelas** untuk setiap satu dari 720 jam; kelas dipilih dengan operasi argmax
+pada inferensi, dan pada pelatihan digunakan entropi silang berpembobot kelas
+untuk mengurangi bias dominasi kelas mayoritas.
+
+Keluaran regresi kemudian **dibalik skalanya** (`inverse_transform` preprocessor)
+agar bernilai dalam satuan asli (°C, mm, W/m², dan lain-lain) untuk evaluasi dan
+deployment.
+
+
+--------------------------------------------------------------------------------
+3.4.5  Training loop
+--------------------------------------------------------------------------------
+
+Pelatihan dilakukan secara iteratif dengan optimiser **Adam** (laju pembelajaran
+dan regularisasi sesuai konfigurasi pada skrip, misalnya `lr=1e-3` dan
+`weight_decay=1e-4`). Setiap epoch, model memproses data dalam **mini-batch**
+(`batch_size` lebih besar pada GPU untuk regresi, sedikit berbeda untuk cuaca).
+
+Untuk regresi, fungsi kerugian berupa **MSE berpembobot** yang hanya memberi bobot
+pada **saluran target** (indeks 0) agar optimisasi terfokus pada variabel yang
+diramalkan tanpa mengabaikan konteks saluran lain sebagai masukan. Untuk cuaca,
+kerugian adalah **entropi silang** pada pasangan (langkah waktu, kelas) dengan
+**pembobot kelas** dari frekuensi invers pada split latih.
+
+Proses **backpropagation** memperbarui parameter untuk meminimalkan kerugian rata-
+rata pada batch latih. Enam model dilatih **berurutan** dalam skrip tunggal
+(`train_multi.py`), masing-masing dengan jejak metriknya sendiri.
+
+
+--------------------------------------------------------------------------------
+3.4.6  Validasi dan early stopping
+--------------------------------------------------------------------------------
+
+Pada interval epoch tertentu (pada implementasi: evaluasi validasi setiap
+**sepuluh** epoch dan pada epoch terakhir), model dievaluasi pada **split
+validasi** tanpa memperbarui bobot. Untuk regresi, dipantau antara lain **loss
+validasi berpembobot** serta metrik regresi pada saluran sasaran (misalnya MAE,
+RMSE, MAPE yang dicetak pada log pelatihan). Untuk cuaca, dipantau loss validasi
+dan akurasi per elemen waktu.
+
+**Early stopping** menghentikan pelatihan bila loss validasi tidak membaik
+melewati ambang ketahanan (`PATIENCE`) setelah beberapa evaluasi berturut-turut
+yang tidak menurunkan loss terbaik; bobot yang dipulihkan adalah snapshot saat
+loss validasi terendah tercapai, bukan necessarily epoch terakhir.
+
+
+--------------------------------------------------------------------------------
+3.4.7  Penyimpanan model terbaik dan artefak
+--------------------------------------------------------------------------------
+
+Model dengan kinerja validasi terbaik (menurut loss validasi yang dipantau)
+disimpan untuk inferensi. Untuk regresi, berkas berisi **state_dict** PatchTST
+(`patchtst_<label>.pth`) bersama **preprocessor** joblib (`preprocessor_<label>.joblib`).
+Untuk cuaca, penyimpanan berupa **kamus** yang memuat `model_state_dict` dan
+metadata ringkas (misalnya akurasi/loss validasi terbaik serta statistik bobot
+entropi silang bila tersedia).
+
+Direktori artefak terpusat pada `Main_model/Multi_Model/artifacts/`. Menyimpan
+preprocessor bersama model memastikan **transformasi identik** antara latihan dan
+ramalan (`predict_multi.py`).
+
+================================================================================
+Akhir penambahan Bab 3.4–3.4.7 (draf disarankan)
+================================================================================
+
+
+--------------------------------------------------------------------------------
+3.5  Evaluation (Evaluasi)
+--------------------------------------------------------------------------------
+
+Evaluasi bertujuan memverifikasi sejauh mana model meramalkan kondisi lingkungan
+mendatang dari riwayat jam-an. Pada penelitian ini, **evaluasi kuantitatif utama**
+dilakukan pada **data historis** dengan jendela validasi yang tidak ikut dilatih
+(bukan wajib membandingkan prediksi terhadap aliran sensor IoT realtime kecuali
+Anda menyediakan dataset pengujian terpisah untuk bab tersebut).
+
+Metrik regresi yang lazim dilaporkan meliputi **Mean Absolute Error (MAE)**,
+**Mean Squared Error (MSE)**, **Root Mean Squared Error (RMSE)**, dan **Mean
+Absolute Percentage Error (MAPE)**. Untuk cabang **klasifikasi cuaca**, kinerja
+dapat dilaporkan sebagai **akurasi rata-rata per langkah waktu** pada horizon
+multi-langkah. Evaluasi kualitatif melengkapi angka, misalnya dengan memeriksa
+apakah kesalahan membesar pada horizon jauh, pada siang hari, atau saat event
+presipitasi ekstrem.
+
+Catatan implementasi: skrip `Main_model/eval_exp.py` menghitung galat regresi
+pada **saluran sasaran dalam ruang terstandarisasi** (sesuai keluaran model
+sebelum inverse transform), sehingga nilai MAE/MSE/RMSE/MAPE yang tercetak
+harus diinterpretasikan konsisten dengan metodologi Anda (atau diberi anotasi
+“skala terstandarisasi”); jika diperlukan metrik dalam satuan asli, evaluasi
+tambahan dapat dibangun dengan `inverse_transform` pada prediksi dan target.
+
+
+--------------------------------------------------------------------------------
+3.5.1  Metode evaluasi
+--------------------------------------------------------------------------------
+
+Metode evaluasi mengikuti pemisahan **80/20** pada **indeks jendela** yang sama
+untuk seluruh label (benih acak tetap agar dapat direplikasi). Untuk setiap
+label regresi, model dimuat dari artefak Multi_Model, lalu galat dihitung antara
+keluaran saluran target dan target sejati pada batch jendela validasi. Untuk
+cuaca, label referensi dibentuk ulang dari kolom presipitasi observasi dengan
+ambang yang sama seperti pada pelatihan, lalu dibandingkan dengan kelas hasil
+`argmax` pada logit model.
+
+Penggunaan beberapa metrik regresi memberi sudut pandang berbeda: MAE peka
+terhadap outlier skala asli dalam ruang galat; MSE/RMSE memberi penalti lebih
+besar pada galat besar; MAPE memberi gambaran galat relatif namun perlu
+kehatian-hatian bila nilai target mendekati nol.
+
+
+--------------------------------------------------------------------------------
+3.5.2  Analisis hasil dan opsi data realtime
+--------------------------------------------------------------------------------
+
+**Analisis utama** dalam repositori ini bersifat **off-line** pada deret historis
+validasi. Jika tersedia **data observasi realtime** (misalnya `realtime_data.csv`
+atau sensor rumah kaca), Anda dapat merancang eksperimen tambahan: menyelaraskan
+timestamp, membandingkan ramalan multi-langkah dengan pengukuran aktual pada
+rentang yang sama, dan mengukur metrik yang identik atau melaporkan simpangan
+sistematis (bias musiman, underestimasi presipitasi, dll.).
+
+Narasi seperti “model mengikuti tren umum” sebaiknya didukung **grafik atau
+tabel** contoh prediksi vs observasi; hindari klaim kuantitatif spesifik tanpa
+data pada bagian ini.
+
+
+--------------------------------------------------------------------------------
+3.5.3  Hasil data numerik
+--------------------------------------------------------------------------------
+
+Hasil evaluasi disajikan sebagai **angka metrik per label** (lima regresi + satu
+cuaca) sehingga pembaca dapat membandingkan kesulitan tugas antarvariabel.
+Secara prinsip, variabel dengan dinamika lembut dan autokorelasi kuat (misalnya
+suhu) sering lebih mudah diramalkan daripada variabel event-sparse (presipitasi)
+atau rasio terbatas (kelembaban), **namun urutan kinerja sebenarnya bergantung
+pada hasil run** Anda—cantumkan nilai yang diperoleh dari `eval_exp.py` atau
+evaluasi satuan-asli yang Anda susun.
+
+Untuk laporan, disarankan menyertakan tabel ringkas MAE/MSE/RMSE/MAPE per label
+regresi dan akurasi cuaca, ditambah satu visualisasi contoh deret prediksi vs
+aktual pada potongan waktu representatif.
+
+
+--------------------------------------------------------------------------------
+3.6  Deployment
+--------------------------------------------------------------------------------
+
+Tahap deployment menghubungkan **keluaran numerik model** dengan **penyajian**
+kepada pengguna akhir. Pada implementasi proyek, inferensi gabungan enam model
+menghasilkan berkas ramalan `Main_model/prediction_forecast.csv` (720 baris per
+jam, kolom sesuai `FEATURES_FORECAST`). Alur operasional dapat digambarkan
+dengan diagram UML (use case, aktivitas, sekuen, kelas) untuk dokumentasi
+perangkat lunak; **sesuaikan penomoran gambar** dengan daftar gambar bab Anda
+(agar tidak bentrok dengan gambar metodologi CRISP-DM jika keduanya memakai
+label “Gambar 3” di versi berbeda).
+
+
+--------------------------------------------------------------------------------
+3.6.1  Large Language Model (LLM) dan peran sensor/IoT
+--------------------------------------------------------------------------------
+
+Modul `llm_recommendations.py` menyediakan contoh integrasi **LLM** (pada
+konfigurasi bawaan: API kompatibel OpenAI menuju **Ollama** dengan model
+**Qwen**) untuk mengubah ringkasan numerik ramalan menjadi **rekomendasi bahasa
+alami** (misalnya saran penyesuaian iklim mikro hidroponik).
+
+Secara konseptual, LLM tidak menggantikan model PatchTST, melainkan
+**menginterpretasikan** keluarannya. Jika sistem produksi Anda memasukkan **sensor
+IoT**, sensor tersebut umumnya memasok **kondisi terkini** pada antarmuka atau
+sebagai konteks teks tambahan bagi LLM, sedangkan **ramalan horizon panjang**
+tetap bersumber dari pipeline PatchTST pada data historis terakhir—sesuaikan
+diagram aktivitas/sekuen agar mencerminkan alur ini (Open-Meteo/historis +
+model + opsional LLM + dashboard), bukan hanya “sensor → model” jika tidak
+akurat dengan kode latih Anda.
+
+**Gambar 2 (Use Case Diagram)** — contoh aktor: pengguna/pengelola; kasus pakai:
+memantau variabel terkini, membuka ramalan 30 hari, membaca rekomendasi LLM.
+
+**Gambar 3 (Activity Diagram)** — alur disarankan: ambil/segarkan data historis
+→ praproses → latih atau muat artefak → `predict_multi` → (opsional) format teks
+→ LLM → tampilkan di dashboard; cabang paralel untuk injeksi snapshot sensor
+realtime bila tersedia.
+
+**Gambar 4 (Sequence Diagram)** — pesan antar komponen: antarmuka, layanan inferensi,
+ penyimpanan artefak, modul LLM, sumber data (CSV historis / snapshot IoT).
+
+**Gambar 5 (Class Diagram)** — kelas-kelas utama pada lapisan aplikasi (misalnya
+loader data, predictor, recommender); samakan dengan struktur paket aktual bila
+diagram dipakai untuk dokumentasi teknis.
+
+
+--------------------------------------------------------------------------------
+3.6.2  Teks deskriptif
+--------------------------------------------------------------------------------
+
+Fungsi seperti `forecast_to_text` mengonversi baris-baris ramalan numerik
+menjadi **ringkasan periode** (misalnya per hari atau cuplikan horizon) dalam
+bentuk kalimat yang dapat dikirim sebagai prompt ke LLM. Teks deskriptif ini
+menjembatani kesenjangan antara tensor prediksi dan bahasa yang dipahami pengguna.
+
+
+--------------------------------------------------------------------------------
+3.6.3  Antarmuka sederhana
+--------------------------------------------------------------------------------
+
+Antarmuka sederhana (misalnya dashboard web atau desktop) menampilkan **plot
+deret**, **tabel ramalan**, dan **panel rekomendasi** dari LLM. Implementasi
+spesifik antarmuka berada di luar inti repositori pemodelan; pada bab ini cukup
+merinci wireframe fungsional: pemilihan lokasi/stasiun, pembaruan data, tombol
+“generate forecast”, dan area teks rekomendasi.
+
+================================================================================
+Akhir penambahan Bab 3.5–3.6.3 (draf disarankan)
+================================================================================
+
+
+################################################################################
+# BAB 4 — HASIL DAN PEMBAHASAN (struktur subbab mengikuti Bab 3)
+################################################################################
+
+
+--------------------------------------------------------------------------------
+4.1  Hasil Business Understanding (Pemahaman bisnis)
+--------------------------------------------------------------------------------
+
+Permasalahan utama yang berhasil diformulasikan adalah kebutuhan **prediksi**
+kondisi lingkungan tanaman secara **proaktif**, bukan sekadar pemantauan yang
+bersifat **reaktif**. Sistem yang dibangun menargetkan dua jalur keluaran yang
+saling melengkapi: (1) **prediksi numerik jangka panjang** terhadap parameter
+lingkungan utama (pada implementasi: horizon **720 jam** atau sekitar **30 hari**
+per jam untuk enam variabel ramalan, yaitu suhu, kelas cuaca, kelembaban relatif
+udara, intensitas cahaya, pH, dan curah hujun, sesuai `FEATURES_FORECAST`); dan
+(2) **rekomendasi tindakan** dalam bahasa alami agar pengguna non-teknis dapat
+bertindak tanpa harus membaca deret angka mentah.
+
+Dari sisi kebutuhan pengguna, nilai tambah sistem terletak pada kemampuan memberi
+gambaran kondisi **beberapa hari hingga sekitar satu bulan ke depan** pada
+resolusi per jam, sehingga keputusan seperti penjadwalan pengawasan, pengaturan
+lingkungan mikro, dan mitigasi periode risiko (panas berlebih, kering relatif,
+atau periode basah) dapat direncanakan lebih dini. Pendekatan ini selaras dengan
+fokus penelitian pada budidaya **hidroponik selada merah** berbasis data
+**meteorologi historis terbuka**, dengan opsi menampilkan **kondisi terkini**
+(misalnya dari berkas observasi realtime bila tersedia) sebagai konteks
+tampilan, bukan sebagai sumber utama pelatihan model.
+
+
+--------------------------------------------------------------------------------
+4.1.1  Identifikasi masalah
+--------------------------------------------------------------------------------
+
+Hasil identifikasi masalah menunjukkan bahwa sistem pemantauan lingkungan pada
+rumah kaca atau instalasi hidroponik pada umumnya masih bersifat **reaktif**:
+pengguna baru menyadari ketidakoptimalan setelah parameter tertentu melampaui
+ambang operasional, sehingga tindakan korektif sering **terlambat** dan berpotensi
+menurunkan kualitas pertumbuhan serta efisiensi energi/air.
+
+Selain itu, sistem yang hanya berfokus pada pemantauan **tidak** memberi gambaran
+**kondisi masa depan**. Dalam praktik budidaya, informasi **prediktif** penting
+untuk mengantisipasi perubahan seperti lonjakan suhu, penurunan kelembaban relatif
+udara, atau variasi intensitas cahaya yang memengaruhi fotosintesis dan beban
+termal larutan. Tanpa ramalan horizon panjang, perencanaan jangka menengah–
+panjang menjadi sulit.
+
+Dari sisi pengguna, kebutuhan informasi juga **bervariasi menurut peran**: petugas
+operasional membutuhkan ringkasan cepat untuk tindakan langsung, sementara
+pengambil keputusan membutuhkan ringkasan risiko untuk perencanaan strategis.
+Hal ini menuntut sistem yang tidak hanya **akurat secara numerik**, tetapi juga
+mampu menyajikan informasi **interpretatif** (misalnya melalui ringkasan teks
+yang dihasilkan modul LLM dari keluaran numerik).
+
+Berdasarkan permasalahan tersebut, dirumuskan kebutuhan akan sistem yang
+mampu meramalkan kondisi lingkungan **secara proaktif** dan menyajikan hasilnya
+secara bertingkat: tensor ramalan multi-langkah dari **enam model PatchTST**
+terpisah, lalu lapisan presentasi/rekomendasi bagi pengguna akhir.
+
+
+--------------------------------------------------------------------------------
+4.1.2  Tujuan penelitian
+--------------------------------------------------------------------------------
+
+Berdasarkan rumusan masalah, tujuan penelitian operationalized menjadi pengembangan
+sistem prediksi berbasis **PatchTST** yang menghasilkan **ramalan deret waktu
+multivariat** dengan **horizon panjang (720 jam)** melalui **arsitektur multi-
+model** (lima regresi per variabel utama dan satu klasifikasi cuaca multi-langkah).
+Dengan demikian, sistem memberi informasi yang lebih kaya dibanding pemantauan
+konvensional yang hanya menampilkan observasi lampau dan kini.
+
+Selain itu, penelitian menargetkan **integrasi praktis**: penyajian hasil dalam
+bentuk **numerik terstruktur** (CSV ramalan) serta **interpretasi bahasa alami**
+menggunakan **LLM** sebagai lapisan decision-support, sehingga pengguna non-teknis
+dapat memahami implikasi ramalan tanpa membaca seluruh deret jam-per-jam.
+
+Dari sisi data, tujuan penyusunan **dataset deret waktu multivariat** yang konsisten
+tercapai melalui pipeline pengambilan arsip per jam (Open-Meteo) dan praproses
+yang terdokumentasi pada Bab 3, memberi dasar pola temporal musiman dan harian
+bagi model.
+
+Ruang lingkup difokuskan pada parameter utama hidroponik selada merah: **suhu**,
+**kelembaban relatif udara**, **intensitas cahaya**, **pH**, **curah hujun**, dan
+**kelas cuaca** turunan. Penelitian **tidak** menargetkan kendali aktuator penuh
+atau optimisasi nutrisi mendetail, sehingga kontribusi utama tetap pada **peramalan**
+dan **dukungan keputusan** berbasis keluaran model dan teks rekomendasi.
+
+
+--------------------------------------------------------------------------------
+4.1.3  Studi kebutuhan data
+--------------------------------------------------------------------------------
+
+Hasil studi kebutuhan data menunjukkan bahwa sistem memerlukan deret waktu
+**multivariat beresolusi jam-an** agar pola temporal (musiman dan harian) dapat
+dipetakan dengan stabil. Variabel lingkungan meliputi suhu, kelembaban relatif
+udara, intensitas cahaya, pH, curah hujun, serta variabel kontekstual atmosfer
+(tekanan, tutupan awan, angin, titik embun, encoding waktu dan lag suhu) yang
+memperkaya sinyal cuaca dan radiasi.
+
+**Sumber utama** adalah **data meteorologi historis terbuka** dengan cakupan
+waktu panjang dan format konsisten, dipilih agar pola musiman dan tren jangka
+panjang dapat dipelajari model. **Data aktual** (misalnya snapshot pada
+`realtime_data.csv` atau sensor IoT bila dioperasikan) berperan sebagai **pelengkap**
+untuk **tampilan kondisi terkini** dan **uji silang opsional**, sedangkan **pelatihan
+dan evaluasi utama** pada implementasi penelitian ini bersandar pada **CSV historis**
+yang sama-sama digunakan inferensi ramalan (`predict_multi.py`).
+
+Dari perspektif pengguna, kebutuhan data tidak hanya akurasi numerik, tetapi juga
+**keterbacaan**: angka ramalan harus dapat diterjemahkan menjadi ringkasan risiko
+dan saran operasional. Oleh karena itu, desain data-output mencakup **enam kolom
+ramalan utama** plus timestamp, yang kemudian dapat dirangkum ke teks untuk LLM.
+
+Dengan pertimbangan tersebut, sistem dirancang agar **historis** dan **observasi
+terkini** dapat dikelola secara terintegrasi pada lapisan aplikasi: historis
+untuk pembelajaran pola masa lalu, observasi terkini untuk konteks “sekarang”,
+sedangkan masa depan diisi oleh keluaran multi-model PatchTST pada jendela
+masukan terakhir.
+
+
+--------------------------------------------------------------------------------
+4.1.4  Rencana eksperimen
+--------------------------------------------------------------------------------
+
+Rencana eksperimen yang dijalankan mengikuti jalur sistematis dari data mentah
+hingga deployment, dan **bermirroring** dengan struktur Bab 3: pengumpulan dan
+penggabungan chunk arsip; pembersihan dan rekayasa fitur; normalisasi **per subset
+model**; pembentukan jendela geser 168→720; pelatihan **enam** PatchTST; evaluasi
+kuantitatif pada split validasi; inferensi gabungan ke `prediction_forecast.csv`;
+serta tahap deployment (ringkasan LLM dan antarmuka).
+
+Pada tahap awal, data historis diunduh dari sumber meteorologi terbuka dan
+disatukan menjadi satu deret per jam, lalu melalui praproses agar konsisten
+temporal dan siap dibentuk menjadi sampel supervisi. Tahap ini menghasilkan basis
+data yang stabil untuk pelatihan horizon panjang.
+
+Selanjutnya, data digunakan untuk melatih **enam model** secara berurutan: lima
+PatchTST regresi (masing-masing dengan MSE berpembobot pada saluran sasaran) dan
+satu PatchTST klasifikasi cuaca dengan entropi silang berpembobot kelas. Artefak
+model dan preprocessor disimpan terpusat untuk reproduksi inferensi.
+
+Tahap evaluasi mengukur kinerja pada **jendela validasi** dari data historis
+(metrik MAE, MSE, RMSE, MAPE untuk regresi; akurasi per langkah untuk cuaca),
+sebagai dasar pemilihan model terbaik dan pembahasan karakteristik galat (misalnya
+per variabel atau per segmen horizon). Analisis tambahan dengan data realtime
+dapat dilakukan bila dataset pengujian tersedia.
+
+Pada tahap akhir, model terbaik di-**inferensikan** melalui pipeline gabungan,
+menghasilkan ramalan numerik multi-hari; keluaran tersebut dapat diteruskan ke
+modul LLM untuk menghasilkan rekomendasi bahasa alami dan ditampilkan pada
+antarmuka sederhana, sehingga rangkaian dari data hingga dukungan keputusan
+dokumentasikan secara menyeluruh.
+
+================================================================================
+Akhir penambahan Bab 4.1–4.1.4 (draf disarankan)
+================================================================================
+
+
+--------------------------------------------------------------------------------
+4.2  Hasil Data Understanding (Pemahaman data)
+--------------------------------------------------------------------------------
+
+Tahap Data Understanding bertujuan memahami karakteristik data, kualitas, hubungan
+antarvariabel, serta implikasi metodologis terhadap praproses dan pemilihan model.
+Pada penelitian ini, data bersifat **deret waktu multivariat berfrekuensi jam-an**
+dengan rentang historis panjang, sehingga analisis tidak berhenti pada statistik
+deskriptif, tetapi mencakup **pola temporal** (harian/musiman) dan **keterkaitan
+fisik** antarparameter lingkungan.
+
+Secara keseluruhan, dataset mendukung **pembelajaran ramalan horizon panjang**
+(720 jam), namun membawa tantangan klasik lingkungan/cuaca: **event jarang**
+(presipitasi), **non-stasioneritas musiman**, dan **heterogenitas skala** antar
+variabel. Temuan itu membenarkan **normalisasi per subset model**, **fitur siklik**,
+**lag suhu**, serta arsitektur **PatchTST** yang dirancang untuk dependensi jarak
+jauh melalui token patch.
+
+Secara operasional, Data Understanding menyimpulkan tiga hal: (1) data layak
+untuk supervisi multivariat dengan **sliding window** 168→720; (2) rekayasa fitur
+diperlukan agar periodisitas dan arah angin **kontinu** bagi model; (3) penyajian
+keluaran perlu memadukan **prediksi kontinu** (misalnya presipitasi) dengan **kelas
+cuaca** yang komunikatif bagi pengguna, sejalan dengan desain multi-model dan
+lapisan inferensi pada pipeline.
+
+
+--------------------------------------------------------------------------------
+4.2.1  Pengumpulan dataset
+--------------------------------------------------------------------------------
+
+Dataset dikumpulkan sebagai deret waktu multivariat dari **Open-Meteo Archive API**
+untuk titik studi sekitar **Dago, Bandung** (koordinat −6,8783°; 107,6219°),
+dengan resolusi **per jam**. Rentang unduhan pada implementasi kode mengikuti
+potongan tahunan hingga **30 April 2026** (chunk terakhir berakhir pada tanggal
+tersebut); pada naskah formal Anda dapat menuliskan rentang persis sesuai baris
+akhir berkas `historical_environment.csv` yang dilampirkan.
+
+Pemilihan Open-Meteo didasarkan pada **panjang arsip**, **konsistensi format**, dan
+ketersediaan parameter yang relevan untuk **mikroklimat hidroponik** (suhu,
+kelembaban, radiasi/ cahaya, angin, tekanan, tutupan awan, presipitasi, kode cuaca,
+dll.). Resolusi jam-an memberi granularitas yang esensial bagi model berbasis
+pembelajaran dalam pada dinamika siang–malam.
+
+Selain deret historis untuk pelatihan, penelitian memfasilitasi **data aktual**
+(misalnya berkas `realtime_data.csv` atau aliran sensor IoT bila dioperasikan)
+sebagai **representasi kondisi terkini** pada tahap **deployment/tampilan** dan
+konteks teks bagi LLM. **Pelatihan utama** tetap pada historis terbuka; integrasi
+aktual bersifat **pelengkap** agar rekomendasi tidak kehilangan “keadaan sekarang”
+bila data tersebut tersedia.
+
+
+--------------------------------------------------------------------------------
+4.2.2  Eksplorasi data
+--------------------------------------------------------------------------------
+
+Setelah penggabungan chunk, dilakukan eksplorasi awal: validitas nilai, anomali,
+**missing values**, serta visualisasi variabel kunci (**suhu**, **kelembaban
+relatif udara**, **radiasi/intensitas cahaya**) untuk melihat bentuk deret sebelum
+praproses lanjutan.
+
+Secara visual dan statistik, deret menunjukkan **fluktuasi harian dan musiman**
+yang jelas: suhu dan radiasi cenderung **puncak siang** dan turun gradual pada
+malam. Implikasinya, model harus mampu mereplikasi **siklus diurnal** tanpa
+menghasilkan lintasan yang bertentangan dengan fisika dasar mikroklimat.
+
+Secara umum, historis Open-Meteo pada pipeline ini tergolong **relatif bersih**
+pasca skrip pengisian/penyelarasan awal; eksplorasi tetap menegaskan perlunya
+pembersihan yang **menghormati dimensi temporal** (bukan sekadar menghapus baris
+acak). Temuan ini menjadi acuan bahwa **normalisasi** dan **windowing** harus
+mengikuti distribusi heterogen antarvariabel.
+
+
+--------------------------------------------------------------------------------
+4.2.3  Label dan target pemodelan
+--------------------------------------------------------------------------------
+
+Ekstraksi dari API dilakukan otomatis per **chunk tahunan** untuk mitigasi batas
+permintaan dan memudahkan validasi per tahun; hasilnya digabung, diurutkan
+kronologis dengan **Asia/Jakarta**, dan dideduplikasi pada timestamp.
+
+Dalam konteks penelitian ini, “label” merujuk pada **target supervisi** yang
+dibentuk untuk dua jenis tugas. Pertama, **lima target regresi** (suhu, humidity,
+light_intensity, ph, precipitation) diproyeksikan multi-langkah melalui jendela
+168→720 dengan PatchTST regresi masing-masing. Kedua, **kelas cuaca** (0/1/2)
+ditetapkan dari **presipitasi observasi** dengan ambang tetap dan dipelajari oleh
+**satu model PatchTST klasifikasi multi-langkah terpisah** (bukan hanya label
+pasca-regresi tanpa model). Jadi pipeline bukan “murni regresi multivariat tanpa
+cabang klasifikasi”, melainkan **enam kepala model** yang koheren dengan artefak
+tersimpan.
+
+Pada **inferensi**, keluaran cuaca yang ditulis ke CSV dapat **disesuaikan secara
+heuristik** dengan sinyal regresi presipitasi agar kelas cuaca tetap komunikatif
+dan selaras dengan ramalan hujan jam-an—sesuai implementasi gabungan pada
+`predict_multi.py`. LLM kemudian dapat memanfaatkan kombinasi numerik + kelas
+untuk narasi rekomendasi.
+
+
+--------------------------------------------------------------------------------
+4.2.4  Variabel dan parameter data
+--------------------------------------------------------------------------------
+
+Atribut dikelompokkan secara konseptual menjadi **target operasional**, **pendukung
+meteorologi**, dan **turunan rekayasa**. Target operasional meliputi suhu (°C),
+humidity (0–1), light_intensity (W/m²), pH, precipitation (mm/jam), serta **kelas
+cuaca** sebagai sasaran klasifikasi terpisah (dengan fitur masukan yang mencakup
+`weather_code` dan konteks atmosfer lain pada subset cuaca).
+
+Pendukung meteorologi mencakup titik embun, tekanan permukaan, tutupan awan,
+kecepatan angin, arah angin (mentah API), serta variabel yang memperkuat konteks
+cuaca dan radiasi. Tutupan awan misalnya berkorelasi dengan radiasi yang masuk,
+sementara angin memoderasi adveksi suhu.
+
+Atribut turunan meliputi **siklus waktu** (hour/doy sin–cos), **siklus arah angin**
+(sin–cos), dan **lag suhu** (24 jam dan 168 jam) sebagai memori eksplisit autokorelasi.
+Susunan variabel ini dirancang agar mekanisme perhatian pada PatchTST dapat
+memanfaatkan **sinyal multi-skala**—dari jam-ke-jam hingga mingguan.
+
+
+--------------------------------------------------------------------------------
+4.2.5  Karakteristik data
+--------------------------------------------------------------------------------
+
+Data meteorologis jam-an menunjukkan **kontinuitas temporal tinggi** namun
+**varians dinamis** yang kuat: baseline suhu bergeser antarbulan (musiman),
+fluktuasi siang–malam mendominasi harian, dan presipitasi bersifat **event-sparse**
+(banyak nol dengan lonjakan singkat saat hujan).
+
+Secara matematis, variabel memiliki **satuan dan rentang heterogen** (rasio 0–1,
+puluhan °C, ratusan W/m², mm, hPa). Tanpa standardisasi yang konsisten, saluran
+berskala besar dapat mendominasi gradien. Selain itu, deret panjang menuntut
+penjagaan **urutan waktu** antar-segmen agar asumsi sekuensial pembelajaran tidak
+rusak oleh duplikasi atau lompatan indeks.
+
+Pemahaman ini membenarkan desain pipeline: penanganan duplikasi, pengisian yang
+**kronologis** pada segmen awal lag, normalisasi **per model**, lalu pembentukan
+**sliding window** 168→720. Dengan demikian, PatchTST belajar dari pola fisik yang
+plausible, bukan dari artefak skala atau diskontinuitas waktu yang belum ditangani.
+
+================================================================================
+Akhir penambahan Bab 4.2–4.2.5 (draf disarankan)
+================================================================================
+
+
+--------------------------------------------------------------------------------
+4.3  Hasil Data Preparation (Pra-pemrosesan data)
+--------------------------------------------------------------------------------
+
+Tahap Data Preparation menerjemahkan temuan Data Understanding menjadi **data siap
+latih**: deret historis yang **kronologis**, fitur turunan domain, **standarisasi
+per model** (bukan satu vektor global untuk semua variabel sekaligus), sampel
+supervisi berbentuk **jendela 168→720**, serta pemisahan **latih/validasi pada
+indeks jendela**. Pada arsitektur **multi-model** saat ini, setiap label regresi
+dan label cuaca memiliki **preprocessor** dan **dimensi saluran** sendiri, sehingga
+hasil preparation harus dibaca sebagai **enam kontrak data** paralel yang konsisten
+dengan artefak di `Main_model/Multi_Model/artifacts/`.
+
+Secara praktis, output tahap ini bukan sekadar “CSV bersih”, tetapi **tensor**
+(atau array) dengan dimensi stabil untuk pelatihan PatchTST, plus berkas joblib
+yang menyimpan parameter scaling agar **inferensi** (`predict_multi.py`)
+menerapkan transformasi **identik** dengan latihan.
+
+Secara keseluruhan, preparation berhasil menjaga **integritas temporal**,
+menyediakan **fitur multi-skala** (siklik waktu, angin, lag), dan membentuk
+supervisi horizon panjang yang selaras dengan tujuan bisnis proaktif.
+
+
+--------------------------------------------------------------------------------
+4.3.1  Hasil penggabungan data
+--------------------------------------------------------------------------------
+
+Penggabungan potongan tahunan dari Open-Meteo menghasilkan **satu deret jam-an**
+tunggal. Hasil yang dapat dilaporkan pada Bab 4 meliputi: (i) **monoton naik**
+indeks waktu setelah sort; (ii) **penghapusan duplikasi** `time` sehingga setiap
+jam unik—penting agar jendela tidak mengandung observasi rangkap; (iii) **panjang
+deret** setelah gabungan (cantumkan angka aktual dari CSV Anda, misalnya jumlah
+baris ~ setara tahun × 365,25 × 24 setelah chunk terakhir).
+
+Implikasi untuk pemodelan: satu sumber kebenaran (`historical_environment.csv`)
+mengurangi risiko **inkonsistensi sumber** antar model; keenam model membaca basis
+yang sama namun melalui **subset kolom** berbeda sesuai `FEATURES_BY_LABEL`.
+
+
+--------------------------------------------------------------------------------
+4.3.2  Hasil data cleaning dan penyelarasan temporal
+--------------------------------------------------------------------------------
+
+Pembersihan pada pipeline pengambilan data memastikan **kesinambungan** dan
+**tipe data numerik** yang konsisten. Praktik yang terwujud meliputi: pengurutan
+kronologis; deduplikasi timestamp; pengisian nilai hilang selektif pada variabel
+API (misalnya default tekanan, tutupan awan, atau turunan sederhana seperti
+dewpoint relatif terhadap suhu); **clip** humidity ke [0,1]; serta penanganan awal
+deret untuk **lag suhu** dengan masking baris awal dan **pengisian balik** agar
+lag tidak memutus rangkaian.
+
+Dampak yang dapat diobservasi: pembentukan jendela tidak “berlubang” akibat NaN
+yang tidak tertangani; skala nilai tetap dalam rentang yang masuk akal untuk
+domain (misalnya humidity tidak melampaui unit rasional).
+
+Catatan metodologis: jika skripsi Anda memerlukan aturan tambahan untuk **nilai
+ekstrem sensor** di luar skrip Open-Meteo, dokumentasikan secara terpisah—pada
+implementasi bawaan, penekanan utama adalah **konsistensi API** dan kelengkapan
+jam-an.
+
+
+--------------------------------------------------------------------------------
+4.3.3  Hasil rekayasa fitur (feature engineering)
+--------------------------------------------------------------------------------
+
+Fitur turunan berhasil ditambahkan tanpa merusak interpretasi fisik, meliputi:
+**encoding siklik waktu** (`hour_sin/cos`, `doy_sin/cos`) agar keterdekatan jam 23
+dan 00 serta kontinuitas musiman terjaga; **encoding siklik arah angin**
+(`wind_dir_sin/cos`) agar 359° dan 1° tidak dipisahkan secara artifisial; **lag
+suhu** 24 jam dan 168 jam sebagai memori autokorelasi harian dan mingguan; serta
+**label cuaca diskret** (0/1/2) dari ambang presipitasi untuk **pelatihan**
+klasifikator cuaca. Variabel **pH** dihasilkan sebagai deret kontrol lambat sesuai
+logika skrip pengumpulan (bukan pengukuran sensor lapangan), sehingga perannya
+lebih sebagai **proxy** kondisi larutan yang stabil untuk eksperimen ramalan.
+
+Secara kelompok, hasil preparation menunjukkan bahwa **feature engineering**
+menambah informasi multi-skala temporal **tanpa** memperluas arsitektur secara
+manual: model menerima sinyal periodisitas dan memori eksplisit melalui saluran
+tambahan pada subset masukan masing-masing.
+
+
+--------------------------------------------------------------------------------
+4.3.4  Hasil normalisasi dan konsistensi transformasi (multi-model)
+--------------------------------------------------------------------------------
+
+Normalisasi menggunakan **StandardScaler** pada **subset fitur tiap label**
+(`EnvironmentPreprocessor` per model). Pada implementasi `build_regression_dataset`
+dan `build_cuaca_dataset`, scaler **di-fit** pada **transformasi seluruh deret
+historis** untuk subset kolom tersebut, kemudian deret terstandarisasi dipotong
+menjadi jendela; **pemisahan 80/20** diterapkan pada **indeks sampel jendela**
+(setelah tensor terbentuk). Hal ini perlu dijelaskan satu kalimat di skripsi agar
+pembimbing memahami bahwa parameter scaling **bukan** dihitung ulang hanya dari
+subset latih, melainkan mengikuti kebijakan kode saat ini—jika diinginkan varian
+“fit hanya pada train”, itu menjadi pekerjaan metodologi terpisah.
+
+Dampak hasil: (i) setiap model memiliki **μ, σ sendiri** per saluran subsetnya;
+(ii) variabel berskala besar tidak mendominasi gradien pada model lain karena
+**saluran tidak dibagi** antar label; (iii) artefak `preprocessor_*.joblib`
+menjamin **transformasi identik** saat inferensi; (iv) **inverse transform**
+mengembalikan regresi ke satuan asli (°C, W/m², mm, …) untuk interpretasi lapangan.
+
+Catatan evaluasi: `eval_exp.py` menghitung galat regresi pada **ruang terstandarisasi**
+saluran sasaran; jika Bab 4 membutuhkan metrik dalam satuan asli, tambahkan
+subeksperimen inverse terlebih dahulu.
+
+
+--------------------------------------------------------------------------------
+4.3.5  Hasil pembentukan dataset jendela (sliding window 168 → 720)
+--------------------------------------------------------------------------------
+
+Sliding window menghasilkan sampel supervisi dengan **INPUT_LEN = 168** jam dan
+**PRED_LEN = 720** jam. Untuk setiap label regresi ℓ, bentuk yang dihasilkan adalah
+**X_ℓ ∈ R^{N×168×D_ℓ}** dan **Y_ℓ ∈ R^{N×720×D_ℓ}**, dengan **D_ℓ** jumlah fitur
+subset label tersebut. Untuk **cuaca**, **X_c ∈ R^{N×168×D_c}** sedangkan
+**Y_c ∈ {0,1,2}^{N×720}** (target kelas per jam), konsisten dengan entropi silang
+multi-langkah.
+
+Secara konseptual, setiap indeks jendela **i** memenuhi: masukan adalah rentang
+[i, i+167], target adalah [i+168, i+887], dan pergeseran satu jam menghasilkan
+sampel berikutnya—sehingga dari satu deret panjang diperoleh **N = T − INPUT_LEN −
+PRED_LEN** sampel (dengan T jumlah baris deret; **isikan N aktual** dari run Anda).
+
+Keuntungan yang dapat dibahas: peningkatan jumlah sampel efektif, struktur
+temporal lokal–global terjaga, dan dukungan **ramalan multi-langkah** yang selaras
+dengan horizon bisnis.
+
+
+--------------------------------------------------------------------------------
+4.3.6  Hasil pemisahan data latih–validasi (pada level sampel jendela)
+--------------------------------------------------------------------------------
+
+Setelah tensor jendela terbentuk, pemisahan **80% latih / 20% validasi** dilakukan
+dengan pengacakan indeks sampel (benih tetap) **per model** pada `train_multi.py`.
+Ini berbeda dari skema split berbasis tanggal blok—skripsi dapat menyertakan satu
+paragraf **asumsi**: sampel jendela acak mengasumsikan **pertukaran i.i.d.**
+yang mendekati pada horizon panjang; jika ingin uji ketahanan terhadap **drift
+musiman**, eksperimen tambahan dengan split temporal dapat diusulkan sebagai
+arah kerja lanjut.
+
+Hasil yang diharapkan: subset validasi cukup besar untuk metrik yang tidak terlalu
+berisik (tergantung N), sementara subset latih tetap representatif karena N
+umumnya jauh lebih besar daripada satu tahun observasi mentah.
+
+
+--------------------------------------------------------------------------------
+4.3.7  Kontrol kualitas pasca-preparation dan kesiapan pemodelan
+--------------------------------------------------------------------------------
+
+Disarankan melaporkan **sanity checks** konkret (diisi dari notebook/skrip Anda):
+tidak ada NaN pada tensor latih/validasi pasca pipeline; statistik ringkas setelah
+scaling (mean mendekati 0 dan std mendekati 1 per saluran subset); contoh visual
+satu variabel sebelum/sesudah scaling atau satu potongan jendela masukan–keluaran.
+**Patching temporal** (patch_len, stride) tidak menghasilkan berkas terpisah di
+tahap preparation; komponen tersebut aktif **di dalam** backbone PatchTST saat
+pelatihan.
+
+Paragraf penutup Bab 4.3 (siap pakai): Secara keseluruhan, hasil Data Preparation
+menunjukkan bahwa data telah bertransformasi dari bentuk mentah API menjadi
+**representasi numerik multi-model** yang konsisten, terstandarisasi per subset,
+dan siap untuk pembelajaran horizon panjang. Integritas temporal yang terjaga,
+rekayasa fitur domain yang relevan, serta kontrak transformasi yang tersimpan pada
+artefak berkontribusi pada **stabilitas pelatihan** PatchTST dan memastikan tahap
+**inferensi** mengikuti transformasi yang sama sehingga prediksi tetap valid
+secara metodologis.
+
+================================================================================
+Akhir penambahan Bab 4.3–4.3.7 (draf disarankan; struktur multi-model)
+================================================================================
+
+
+--------------------------------------------------------------------------------
+4.4  Hasil modeling (Pemodelan)
+--------------------------------------------------------------------------------
+
+Bab ini menyajikan **hasil dan pembahasan** tahap pemodelan: apakah rancangan multi-
+model PatchTST berhasil diwujudkan dalam artefak, bagaimana perilaku pelatihan
+dan validasi, serta bagaimana komponen-komponen arsitektur berperan secara praktis.
+Pembahasan mengacu pada implementasi `Multi_Model/train_multi.py`, modul resmi
+`model/patchtst_official.py`, serta inferensi gabungan `Multi_Model/predict_multi.py`.
+
+
+--------------------------------------------------------------------------------
+4.4.1  Arsitektur pipeline model (end-to-end)
+--------------------------------------------------------------------------------
+
+Secara keseluruhan, pipeline yang dihasilkan penelitian dapat digambarkan sebagai
+rantai komponen berikut (disarankan sebagai **Gambar arsitektur pipeline** pada
+naskah):
+
+1. **Akuisisi dan integrasi data**  
+   Sumber utama adalah **dataset historis jam-an** hasil Open-Meteo yang disatukan
+   menjadi `data/historical_environment.csv`. **Data aktual** (misalnya
+   `realtime_data.csv` atau sensor IoT) bersifat **pelengkap** untuk tampilan atau
+   uji silang, **bukan** sumber utama tensor latih—agar konsisten dengan pipeline
+   multi-model saat ini. Variabel target hidroponik meliputi suhu, kelembaban
+   relatif udara, intensitas cahaya, pH, presipitasi, dan kelas cuaca (bukan
+   “kelembaban tanah” atau nutrisi terpisah seperti pada draf lama).
+
+2. **Pra-pemrosesan dan normalisasi**  
+   Data mentah dibersihkan dan diturunkan fitur domain (siklik waktu, angin, lag,
+   label cuaca dari presipitasi, dll.), lalu **distandarisasi per subset model**
+   sebelum pembentukan jendela supervisi.
+
+3. **Pembentukan jendela supervisi (sliding window)**  
+   Setiap model memakai pasangan **168 jam masukan → 720 jam keluaran**; patching
+   **belum** menghasilkan berkas terpisah pada tahap ini.
+
+4. **Pelatihan PatchTST (multi-model)**  
+   **Enam** model terlatih: lima regresi per label dan satu klasifikasi cuaca;
+   **temporal patching** dan **Transformer encoder** aktif **di dalam** setiap
+   backbone saat forward/backward.
+
+5. **Inferensi gabungan**  
+   Artefak dimuat kembali; keluaran direkonstruksi ke `Main_model/prediction_forecast.csv`
+   (enam kolom ramalan + waktu).
+
+6. **Lapisan rekomendasi LLM (opsional)**  
+   Ringkasan numerik dapat dikonversi ke teks dan dikirim ke LLM (pada proyek:
+   modul `llm_recommendations.py`, contoh integrasi Ollama/Qwen).
+
+7. **Penyajian dashboard sederhana**  
+   Visualisasi ramalan dan teks rekomendasi untuk pengguna akhir (implementasi UI
+   berada di luar inti repositori pemodelan, tetapi merupakan ujung pipeline).
+
+Catatan: perbandingan eksplisit dengan baseline **LSTM/GRU/ARIMA** tidak termasuk
+inti kode saat ini; jika diperlukan di skripsi, cantumkan sebagai **eksperimen
+tambahan** atau pekerjaan terpisah agar tidak bertentangan dengan artefak yang
+diserahkan.
+
+
+--------------------------------------------------------------------------------
+4.4.2  Hasil arsitektur PatchTST dan skenario multi-model
+--------------------------------------------------------------------------------
+
+Secara implementasi, **enam jalur PatchTST** berhasil dibentuk: lima `PatchTST_Official`
+untuk regresi multi-langkah dengan keluaran berdimensi **(batch, 720, D_ℓ)** pada
+ruang terstandarisasi subset, dan satu **CuacaPatchTST** (backbone sama + linear
+tiga kelas per jam). Konfigurasi praktis yang dipakai mencakup antara lain
+`patch_len=16`, `stride=8`, `d_model=128`, serta susunan encoder sesuai skrip
+pelatihan.
+
+Dari sisi pembahasan, skenario multi-model memisahkan **tanggung jawab prediksi**
+per variabel utama sehingga setiap tugas memiliki **masukan relevan** tanpa
+memaksakan satu tensor raksasa tunggal; hal ini memudahkan pelacakan galat per
+label dan deployment parsial (misalnya `--cuaca-only` untuk menyegarkan hanya
+model cuaca).
+
+
+--------------------------------------------------------------------------------
+4.4.3  Hasil temporal patching dan embedding
+--------------------------------------------------------------------------------
+
+Pemecahan 168 jam menjadi patch dengan **stride overlap** mengurangi jumlah token
+dibanding memproses setiap jam sebagai token terpisah, sehingga—secara praktis—
+pelatihan horizon 720 jam tetap dalam kendala memori yang wajar pada perangkat
+yang digunakan. **Embedding** ke `d_model` memberi ruang representasi bersama
+untuk interaksi antar-patch melalui attention.
+
+Pada pembahasan kualitatif (boleh dilengkapi plot dari log), pola **diurnal** pada
+keluaran regresi cenderung terjaga apabila data latih memuat musim yang cukup;
+deviasi sering muncul pada **transisi cuaca cepat** karena sifat target yang non-
+linear.
+
+
+--------------------------------------------------------------------------------
+4.4.4  Hasil penggunaan Transformer encoder
+--------------------------------------------------------------------------------
+
+Encoder multi-head self-attention memungkinkan setiap patch “melihat” patch lain,
+sehingga model dapat memadukan **pola lokal** (dalam patch) dengan **konteks
+mingguan** (lintas patch). Dibanding model rekurensi klasik, mekanisme ini
+mengurangi ketergantungan propagasi sekuensial panjang, yang relevan untuk horizon
+720 jam.
+
+Hasil yang dapat diargumentasikan: stabilnya kurva loss pada banyak epoch awal
+pada sebagian label (diisi dari log Anda) serta kemampuan model menangkap
+**musim** melalui fitur `doy` dan **siklus harian** melalui fitur jam.
+
+
+--------------------------------------------------------------------------------
+4.4.5  Hasil forecast head (regresi vs klasifikasi)
+--------------------------------------------------------------------------------
+
+Pada **regresi**, kepala resmi memproyeksikan representasi ke seluruh saluran
+subset; **MSE berpembobot saluran 0** membuat optimisasi mengutamakan target
+numerik utama sementara saluran konteks tetap dipelajari sebagai masukan.
+**Inverse transform** setelah inferensi mengembalikan prediksi ke satuan asli
+untuk interpretasi pertanian/hidroponik.
+
+Pada **cuaca**, kepala linear menghasilkan **logit tiga kelas** per jam; pada
+inferensi, kelas yang ditulis ke CSV dapat **disesuaikan** dengan sinyal regresi
+presipitasi agar keluaran komunikatif—sesuai kebijakan `predict_multi.py`.
+Pembahasan dapat menyoroti trade-off: klasifikator memberi diskretisasi halus,
+sedangkan presipitasi regresi memberi magnitudo hujun jam-an.
+
+
+--------------------------------------------------------------------------------
+4.4.6  Hasil training loop (optimisasi dan konvergensi)
+--------------------------------------------------------------------------------
+
+Pelatihan dengan **Adam**, mini-batch, dan backpropagation berhasil menurunkan
+loss latih pada keenam model, dengan jejak metrik validasi per label yang tercetak
+pada log `train_multi.py`. **Lima regresi** memakai MSE berpembobot saluran sasaran;
+**cuaca** memakai entropi silang berpembobot kelas untuk mengurangi dominasi kelas
+cerah.
+
+Pada pembahasan, cantumkan contoh numerik **sebelum/sesudah** beberapa epoch
+untuk satu atau dua label (diambil dari log Anda) untuk memperkuat bukti empiris.
+Jika perangkat **GPU** tersedia, waktu per epoch biasanya lebih pendek—sebutkan
+secara kualitatif tanpa membesar-besarkan jika tidak ada benchmark formal.
+
+
+--------------------------------------------------------------------------------
+4.4.7  Hasil validasi dan early stopping
+--------------------------------------------------------------------------------
+
+Mekanisme evaluasi periodik pada **data validasi** (setiap sepuluh epoch pada
+implementasi) memberi sinyal **generalisasi** di luar loss latih. **Early stopping**
+memutus pelatihan saat loss validasi stagnan menurut aturan `PATIENCE`, dan bobot
+yang dipakai adalah snapshot **loss validasi terendah**—bukan otomatis epoch
+terakhir.
+
+Pembahasan: bandingkan epoch berhenti antarlabel (dari log) untuk menjelaskan
+label mana yang lebih “sulit” atau lebih lambat konvergen; sertakan catatan jika
+cuaca mencapai akurasi per langkah tertentu pada validasi.
+
+
+--------------------------------------------------------------------------------
+4.4.8  Hasil penyimpanan model terbaik dan artefak
+--------------------------------------------------------------------------------
+
+Artefak tersimpan terpusat pada `Main_model/Multi_Model/artifacts/`: untuk setiap
+regresi, pasangan `patchtst_<label>.pth` + `preprocessor_<label>.joblib`; untuk
+cuaca, `patchtst_cuaca.pth` (kamus berisi `model_state_dict` dan metadata) +
+`preprocessor_cuaca.joblib`. Keberadaan berkas ini menjadi **bukti kelengkapan**
+pipeline dan prasyarat suksesnya `predict_multi.py`.
+
+Secara kesimpulan bab, penyimpanan artefak menutup loop dari Bab 3–4: dari data
+siap latih menuju model yang dapat **diulang inferensinya** dengan transformasi
+konsisten—titik awal bagi Bab evaluasi kuantitatif berikutnya (4.5) dan deployment
+(4.6).
+
+================================================================================
+Akhir penambahan Bab 4.4–4.4.8 (draf disarankan; hasil & pembahasan)
+================================================================================
+
+
+--------------------------------------------------------------------------------
+4.5  Hasil evaluation (Evaluasi)
+--------------------------------------------------------------------------------
+
+Bab ini melaporkan **seberapa baik** model multi-PatchTST memenuhi tujuan
+peramalan pada data yang **tidak ikut dilatih** (split validasi jendela) serta
+laporan **pelengkap** berupa analisis tambahan (opsional) dan evaluasi kualitatif
+rekomendasi. Evaluasi utama mengacu pada skrip `Main_model/eval_exp.py` dan/atau
+notebook analisis Anda; pastikan angka yang dicetak diinterpretasikan konsisten
+(dingat: metrik regresi pada `eval_exp` dihitung pada **ruang terstandarisasi**
+saluran sasaran—lihat catatan Bab 3.5).
+
+
+--------------------------------------------------------------------------------
+4.5.1  Hasil evaluasi kuantitatif pada split validasi (sesuai 3.5.1)
+--------------------------------------------------------------------------------
+
+Secara prosedur, evaluasi mengikuti **80/20 indeks jendela** yang sama untuk
+semua label (benih tetap), lalu mengukur galat regresi pada **keluaran saluran
+target** model versus target validasi untuk lima label regresi, serta **akurasi
+rata-rata per langkah waktu** untuk model cuaca (membandingkan argmax logit
+dengan label referensi dari presipitasi observasi).
+
+**Hasil yang perlu Anda isi dari run `python Main_model/eval_exp.py`:** salin
+baris log untuk setiap label ke tesis. Secara pembahasan, bandingkan **MAE vs
+RMSE** untuk melihat apakah ada **outlier galat** besar; gunakan **MAPE** dengan
+hati-hati pada target yang mendekati nol.
+
+**[TABEL 4.A — wajib]** *Ringkasan metrik validasi (internal)*
+
+| Kolom | Keterangan |
+|-------|------------|
+| **Label** | `suhu`, `humidity`, `light_intensity`, `ph`, `precipitation`, `cuaca` |
+| **MAE** | Untuk regresi: dari eval_exp (skala terstandarisasi saluran target); isi angka |
+| **MSE** | Idem |
+| **RMSE** | Idem |
+| **MAPE (%)** | Idem (untuk cuaca: kosongkan atau ganti dengan “—”) |
+| **Akurasi cuaca (%)** | Hanya baris `cuaca`: isi “mean per-step accuracy”; regresi kosong |
+
+**Catatan kaki tabel (wajib):** “MAE/MSE/RMSE/MAPE regresi dihitung pada **target
+channel dalam representasi StandardScaler**; untuk interpretasi **°C / mm / W/m²**,
+lampirkan **Tabel 4.A-bis** opsional setelah `inverse_transform` jika Anda
+menyusun skrip tambahan.”
+
+Paragraf pembahasan (hasil): jelaskan apakah pola **periodik** terekam dengan baik
+(misalnya suhu), apakah **presipitasi** menunjukkan galat lebih besar pada event
+langka, dan apakah **cuaca** mengalami bias kelas—selalu tautkan ke angka Tabel 4.A.
+
+
+--------------------------------------------------------------------------------
+4.5.2  Hasil analisis tambahan: perbandingan eksternal dan/atau observasi realtime (sesuai 3.5.2)
+--------------------------------------------------------------------------------
+
+Di luar split validasi internal, Anda dapat melaporkan **uji lapangan ringan**:
+misalnya membandingkan **suhu ramalan** (dari kolom `suhu` pada
+`prediction_forecast.csv` atau evaluasi khusus) dengan **referensi suhu** yang
+Anda ambil dari **Google Weather** pada rentang waktu tertentu.
+
+**Peringatan metodologi:** ramalan model Anda beresolusi **1 jam** dan horizon
+**hingga 720 jam**; data Google biasanya **interval lebih renggang** (Anda
+menyebut **3 jam**). Anda harus mendefinisikan aturan **resampling / pemetaan
+waktu** (misalnya ambil jam ramalan terdekat dengan timestamp Google, atau
+rata-rata 3 jam) agar perbandingan adil. Juga bedakan: referensi Google adalah
+**layanan pihak ketiga**, bukan “ground truth” sensor lapangan.
+
+**[TABEL 4.B — opsional]** *Perbandingan suhu: model vs referensi eksternal*
+
+| Kolom | Keterangan |
+|-------|------------|
+| **Datetime (Asia/Jakarta)** | Timestamp baris perbandingan (seragam) |
+| **Suhu_prediksi_model (°C)** | Dari ramalan Anda (pastikan sudah inverse jika diambil dari ruang terstandarisasi) |
+| **Suhu_referensi_google (°C)** | Nilai yang Anda catat manual/ekspor |
+| **Selisih (°C)** | Prediksi − referensi |
+| **Catatan** | Cuaca ikon Google / kondisi hujan jika relevan |
+
+Isi tabel untuk **7 hari** yang Anda pilih; baris mengikuti interval **3 jam**
+(00, 03, …, 21) seperti kerangka Anda, atau sesuaikan jika Anda ubah interval.
+
+**Paragraf kedua (opsional):** jika Anda memiliki **sensor IoT / realtime_data**,
+tambahkan sub-tabel atau paragraf yang membandingkan **beberapa titik** ramalan
+dengan pembacaan sensor (jelaskan sinkronisasi waktu dan kalibrasi).
+
+**Evaluasi kualitatif rekomendasi LLM (rubrik, bukan angka tunggal):** laporkan
+skor atau checklist untuk **(i) keterbacaan**, **(ii) relevansi** terhadap
+prediksi/observasi, **(iii) konsistensi** dengan rentang optimal hidroponik
+selada. Sertakan **cuplikan prompt** dan **cuplikan keluaran** (boleh sebagai
+**Gambar 4.x** potongan teks, bukan tabel).
+
+
+--------------------------------------------------------------------------------
+4.5.3  Hasil data numerik dan sintesis pembahasan (sesuai 3.5.3)
+--------------------------------------------------------------------------------
+
+Bagian ini merangkum **implikasi praktis** angka pada Tabel 4.A (dan 4.B jika ada):
+variabel mana yang “siap operasional” untuk decision support awal, mana yang
+perlu perbaikan data atau arsitektur pada penelitian lanjut. Hubungkan toleransi
+galat suhu (misalnya ±X °C) dengan keputusan lapangan (ventilasi, naungan).
+
+**[TABEL 4.C — disarankan]** *Sintesis per label (bukan menggandakan 4.A mentah-2)*
+
+| Kolom | Keterangan |
+|-------|------------|
+| **Label** | Nama variabel |
+| **Kategori kinerja** | Misalnya Baik / Sedang / Perlu perbaikan (definisikan ambang dari Tabel 4.A) |
+| **Implikasi operasional** | Satu kalimat contoh keputusan yang masih aman |
+| **Risiko residual** | Misalnya event hujan, tail error horizon > 14 hari |
+
+Jika Anda tidak ingin tabel tambahan, gabungkan isi Tabel 4.C sebagai paragraf
+naratif panjang dengan **huruf tebal** pada angka kunci.
+
+
+--------------------------------------------------------------------------------
+4.6  Hasil deployment (Deployment)
+--------------------------------------------------------------------------------
+
+Bab ini melaporkan **hasil implementasi ujung** pipeline: berkas ramalan,
+integrasi LLM lokal, penyajian aplikasi, dan (opsional) penyisipan data aktual.
+Struktur mengikuti Bab 3.6, tetapi berfokus pada **bukti nyata** (tangkapan layar,
+alur, cuplikan teks) yang Anda lampirkan di naskah.
+
+
+--------------------------------------------------------------------------------
+4.6.1  Hasil integrasi LLM (sesuai 3.6.1)
+--------------------------------------------------------------------------------
+
+Pada implementasi proyek, LLM diarahkan ke **Ollama lokal** dengan model **Qwen**
+(`llm_recommendations.py`), sehingga rekomendasi dapat dihasilkan **tanpa** API
+cloud berbayar (selama layanan Ollama berjalan di mesin Anda).
+
+**Hasil yang dilaporkan:** contoh **prompt** (input ringkasan ramalan) dan
+**jawaban LLM** (rekomendasi); catat apakah kualitas teks membaik setelah
+penyempurnaan prompt. Sebutkan kendala (misalnya halusinasi generik) jika muncul.
+
+**Gambar / foto yang disarankan (lampiran Bab 4.6.1)**
+
+1. **Tangkapan layar terminal atau UI Ollama** saat model Qwen dimuat / sedang menjawab.  
+2. **Contoh prompt lengkap** (boleh blur bagian sensitif) + **respons LLM** dalam satu figure dua panel.  
+3. **Diagram alir data ringkas** (opsional): `prediction_forecast.csv` → fungsi format teks → request LLM → teks rekomendasi.
+
+
+--------------------------------------------------------------------------------
+4.6.2  Hasil teks deskriptif (sesuai 3.6.2)
+--------------------------------------------------------------------------------
+
+Laporkan apakah fungsi semacam `forecast_to_text` berhasil menghasilkan ringkasan
+yang **cukup padat** untuk prompt (tidak terlalu panjang agar tidak melebihi
+konteks LLM). Cantumkan **statistik** sederhana: panjang token rata-rata, jumlah
+hari yang dirangkum, dsb., jika Anda mengukurnya.
+
+**Gambar / foto yang disarankan**
+
+1. **Cuplikan kode atau log** yang menunjukkan string teks yang dikirim ke LLM (1 halaman).  
+2. **Perbandingan sebelum/sesudah** perbaikan prompt (dua versi teks rekomendasi).
+
+
+--------------------------------------------------------------------------------
+4.6.3  Hasil antarmuka sederhana dan integrasi data aktual / IoT (sesuai 3.6.3)
+--------------------------------------------------------------------------------
+
+Jika Anda membangun **dashboard** atau prototipe UI, bab ini mendokumentasikan
+bahwa pengguna dapat: melihat **kondisi terkini** (dari `realtime_data.csv` atau
+sensor), membuka **tabel/plot ramalan 720 jam**, dan membaca **panel rekomendasi**
+LLM. Uji coba yang dilaporkan sebaiknya bersifat **checklist fungsional**: data
+ter-load, prediksi dihasilkan, teks tampil, tidak ada error runtime.
+
+**Gambar / foto yang disarankan (prioritas untuk pembaca)**
+
+1. **Tampilan penuh dashboard** (1 gambar) — menunjukkan layout: sidebar, grafik, tabel.  
+2. **Widget “kondisi saat ini”** — kartu suhu, humidity, cahaya, pH (nilai numerik + satuan).  
+3. **Tabel atau grafik ramalan** — minimal **suhu** dan **presipitasi** untuk 7 hari pertama + indikasi **kelas cuaca** (warna/warna ikon).  
+4. **Panel rekomendasi LLM** — teks panjang dalam kotak scroll.  
+5. **Alur integrasi IoT (skema)** — diagram blok: sensor/gateway → berkas/API → aplikasi → (opsional) penyimpanan; **foto perangkat keras** 1–2 lembar jika relevan.  
+6. **Urutan layar (opsional)** — 3–4 screenshot alur klik: buka aplikasi → muat data → generate forecast → tampil rekomendasi.
+
+**Catatan konsistensi dengan penelitian:** ramalan horizon panjang tetap berasal
+dari **PatchTST pada historis**; peran IoT adalah **konteks terkini** dan
+**validasi tambahan**, bukan pengganti pelatihan—sesuaikan teks figure caption
+agar tidak bertentangan dengan Bab 3–4 sebelumnya.
+
+================================================================================
+Akhir penambahan Bab 4.5–4.6.3 (draf disarankan; hasil, tabel & gambar)
+================================================================================

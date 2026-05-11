@@ -17,9 +17,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-import joblib
 import numpy as np
 import torch
+import joblib
 
 from model.patchtst_official import PatchTST_Official
 from Multi_Model.datasets_multi import load_historical_df
@@ -39,13 +39,37 @@ SEED = 42
 BATCH_SIZE = 256 if torch.cuda.is_available() else 64
 
 
+class CuacaPatchTST(torch.nn.Module):
+    """Local classifier wrapper to evaluate cuaca checkpoint from train_multi.py."""
+
+    def __init__(self, input_dim: int):
+        super().__init__()
+        self.backbone = PatchTST_Official(
+            input_dim=input_dim,
+            input_len=INPUT_LEN,
+            pred_len=PRED_LEN,
+            patch_len=PATCH_LEN,
+            stride=STRIDE,
+            d_model=128,
+            n_heads=16,
+            num_layers=3,
+            dropout=0.2,
+            revin=True,
+        )
+        self.classifier = torch.nn.Linear(input_dim, 3)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        feat = self.backbone(x)
+        return self.classifier(feat)
+
+
 def _make_val_indices(total_rows: int, input_len: int, pred_len: int, seed: int = SEED) -> np.ndarray:
     n_samples = total_rows - input_len - pred_len
     if n_samples <= 0:
         raise ValueError("Not enough rows to build validation windows.")
     rng = np.random.default_rng(seed)
     perm = rng.permutation(n_samples)
-    train_end = int(0.8 * n_samples)
+    train_end = int(0.7 * n_samples)
     return perm[train_end:]
 
 
@@ -121,8 +145,12 @@ def _evaluate_cuaca(df, val_indices: np.ndarray):
 
     features = FEATURES_BY_LABEL["cuaca"]
     pre = joblib.load(art.preprocessor_path)
-    clf = joblib.load(art.model_path)
     data_scaled = pre.transform(df)
+    model = CuacaPatchTST(input_dim=data_scaled.shape[-1])
+    payload = torch.load(art.model_path, map_location="cpu")
+    state = payload["model_state_dict"] if isinstance(payload, dict) and "model_state_dict" in payload else payload
+    model.load_state_dict(state)
+    model.eval()
 
     if "precipitation" not in df.columns:
         raise ValueError("Dataset must contain 'precipitation' to derive cuaca labels.")
@@ -139,7 +167,9 @@ def _evaluate_cuaca(df, val_indices: np.ndarray):
             [y_cuaca[j + INPUT_LEN : j + INPUT_LEN + PRED_LEN] for j in start_indices],
             axis=0,
         )
-        y_hat = clf.predict(xb_np.reshape(xb_np.shape[0], -1))
+        with torch.no_grad():
+            logits = model(torch.tensor(xb_np, dtype=torch.float32))
+            y_hat = torch.argmax(logits, dim=-1).cpu().numpy()
         correct += int((y_hat == y_true).sum())
         total += int(y_true.size)
 
@@ -162,7 +192,7 @@ def main():
 
     df = load_historical_df()
     val_indices = _make_val_indices(len(df), INPUT_LEN, PRED_LEN, seed=SEED)
-    print(f"Validation samples: {len(val_indices)} (80/20 split, seed={SEED})")
+    print(f"Validation samples: {len(val_indices)} (70/30 split, seed={SEED})")
 
     for label in REGRESSION_LABELS:
         try:

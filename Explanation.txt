@@ -3,241 +3,257 @@
   (For Research Paper / Final College Project)
 ================================================================================
 
-This document explains the current pipeline: how data is fetched, how
-PatchTST is trained, and how predictions are produced. The active pipeline
-uses Open-Meteo historical data and the Main_model (hourly, 2-week forecast).
+This document describes the ACTIVE pipeline: Open-Meteo hourly data, six
+separate PatchTST models (Multi_Model), and a one-month (720-hour) forecast
+written to Main_model/prediction_forecast.csv. A short legacy section at the
+end summarizes the older single-model Main_model path if you still need it.
 
 --------------------------------------------------------------------------------
 1. PROJECT OVERVIEW
 --------------------------------------------------------------------------------
 
-Goal: Predict the next 2 weeks of environment conditions (temperature, weather,
-soil moisture, pH) for red leaf lettuce (Lactuca sativa L.) in Bandung, then
+Goal: Predict the next 30 days (720 hourly steps) of environment variables for
+hydroponic red leaf lettuce (Lactuca sativa L.) near Bandung, Indonesia, then
 optionally turn the forecast into natural-language recommendations via an LLM.
 
-Main outputs (4 features in prediction_forecast.csv):
-  - suhu       = temperature (°C)
-  - cuaca      = weather (0=clear, 1=cloudy, 2=rain)
-  - kelembapan = soil moisture (0–1)
-  - ph         = soil/substrate pH (optimal 6.0–7.0 for lettuce)
+Main outputs (columns in Main_model/prediction_forecast.csv), aligned with
+Main_model/config_exp.FEATURES_FORECAST:
 
-The model uses additional inputs (dewpoint, pressure, cloud cover, solar
-radiation, wind, cyclical time, temperature lags) to improve accuracy. Only
-suhu, cuaca, kelembapan, ph are written to the forecast CSV for lettuce use.
+  - suhu              = air temperature (deg C)
+  - cuaca             = weather class (0 = clear, 1 = cloudy, 2 = rain)
+  - humidity          = relative humidity (0-1 scale in data)
+  - light_intensity   = shortwave radiation proxy (W/m^2)
+  - ph                = substrate pH (slow-varying series)
+  - precipitation     = hourly precipitation (mm)
+
+There is no soil-moisture ("kelembapan") column in the current hydroponic
+pipeline; humidity is air relative humidity from Open-Meteo.
+
+Horizons (defaults shared via Main_model/config_exp.py and
+Multi_Model/multi_config.py): INPUT_LEN = 168 (one week of past hours),
+PRED_LEN = 720 (30 days of future hours).
 
 
 --------------------------------------------------------------------------------
 2. WHERE IS PATCHTST AND HOW DOES IT WORK?
 --------------------------------------------------------------------------------
 
-File: model/patchtst_official.py (wraps PatchTST-main)
+File: model/patchtst_official.py (wraps PatchTST-main/PatchTST_supervised)
 
 The project uses the official PatchTST architecture from "A Time Series is
 Worth 64 Words" (Nie et al.):
 
-  - Input: (batch, 168, n_features). 168 hours (1 week) of past data; n_features
-    is 19 after encoding (16 continuous scaled + 3 one-hot for cuaca).
+  - Input per model: (batch, 168, D_l) where D_l is the number of features for
+    that label (different for each of the six models). Values come from
+    EnvironmentPreprocessor (StandardScaler on continuous columns only for
+    these feature lists; cuaca is NOT one-hot inside the Multi_Model subsets).
 
-  - Patching: The 168 timesteps are split into patches (patch_len=16, stride=8).
-    Each patch is projected to d_model=128. The sequence length seen by the
-    Transformer is reduced (e.g. ~21 patch tokens instead of 168 raw steps).
+  - Patching: 168 hours are turned into patch tokens (defaults: patch_len=16,
+    stride=8 in Multi_Model/multi_config.py). Each patch is embedded to
+    d_model=128. The Transformer sees a shorter patch sequence than 168 raw steps.
 
-  - RevIN: Reversible Instance Normalization is applied per channel before and
-    after the backbone so the model sees normalized inputs and outputs are
-    denormalized.
+  - RevIN: Reversible Instance Normalization per channel where enabled in the
+    official config.
 
-  - Backbone: Transformer encoder over the patch tokens (3 layers, 16 heads,
-    d_model=128). Self-attention captures long-range dependencies.
+  - Backbone: Transformer encoder over patch tokens (3 layers, 16 heads,
+    d_model=128 in the current training scripts).
 
-  - Head: Linear layer maps the patch representations to pred_len × n_features.
-    With PRED_LEN=336, the model outputs 336 future hours (2 weeks) for all
-    features.
+  - Regression head (five models): The official PatchTST head predicts all D_l
+    channels for each of the next PRED_LEN hours; training stresses the target
+    channel (index 0 in FEATURES_BY_LABEL[label]) via a channel-weighted MSE.
 
-  - Output: (batch, 336, 19) in encoded space; after inverse transform, the
-    forecast CSV saves only [suhu, cuaca, kelembapan, ph] (4 columns).
+  - Cuaca head (one model): Multi_Model/train_multi.py defines CuacaPatchTST:
+    same PatchTST_Official backbone, then a linear layer mapping per-timestep
+    features to 3 logits (clear / cloudy / rain) for each of the PRED_LEN steps.
+
+Detailed hyperparameters may drift; see Multi_Model/multi_config.py and
+Multi_Model/train_multi.py for the exact numbers used in code.
 
 
 --------------------------------------------------------------------------------
-3. CURRENT PIPELINE — FILE BY FILE
+3. CURRENT PIPELINE — PRIMARY (MULTI_MODEL), FILE BY FILE
 --------------------------------------------------------------------------------
 
 --- fetch_openmeteo_historical.py ---
 
-  Purpose: Build the single source of training and prediction input data.
+  Purpose: Build the single CSV used for training and inference.
 
-  - Fetches hourly historical weather from Open-Meteo Archive API for Bandung
-    (latitude -6.8783, longitude 107.6219), in yearly chunks.
-  - API variables: temperature_2m, relative_humidity_2m, dewpoint_2m,
-    surface_pressure, cloud_cover, shortwave_radiation, wind_speed_10m,
-    wind_direction_10m, precipitation.
-  - Derived: cuaca (0/1/2 from precipitation), kelembapan (synthetic soil
-    moisture from precip + humidity), ph (slow drift 6–7), suhu (= temperature_2m).
-  - Cyclical time: hour_sin, hour_cos, doy_sin, doy_cos from timestamps.
-  - Wind: wind_dir_sin, wind_dir_cos from wind_direction_10m.
-  - Lags: temp_lag_24, temp_lag_168 (temperature 24 h and 168 h ago).
-  - Writes data/historical_environment.csv (time + 17 feature columns). Run
-    this first when refreshing data; then train and predict use this file.
+  - Fetches hourly archive weather for Bandung (latitude -6.8783, longitude
+    107.6219), in yearly chunks, via Open-Meteo.
+  - API-style columns include temperature, humidity, dewpoint, pressure,
+    cloud cover, shortwave radiation, wind, precipitation, weather_code.
+  - Writes data/historical_environment.csv with derived fields (e.g. cyclical
+    time, wind sin/cos, temp lags) and lettuce-oriented series (humidity 0-1,
+    light_intensity, ph, cuaca from precipitation thresholds).
+  - Cuaca in the CSV uses the same precipitation thresholds as the training
+    labels for the classifier: see precip_to_cuaca in Multi_Model/datasets_multi.py
+    (rain if precip > 0.5, cloudy if > 0.1, else clear).
 
 
 --- Main_model/config_exp.py ---
 
-  Purpose: Configuration for the Main_model pipeline.
+  Purpose: Global defaults for feature lists and horizons.
 
-  - ALL_FEATURES: List of 17 column names (suhu, cuaca, kelembapan, ph, plus
-    dewpoint, pressure, cloud_cover, shortwave_radiation, wind, cyclical time,
-    temp lags).
-  - FEATURES_FORECAST: [suhu, cuaca, kelembapan, ph] — columns written to
-    prediction_forecast.csv.
-  - INPUT_LEN = 168 (1 week of hours), PRED_LEN = 336 (2 weeks).
-
-
---- Main_model/preprocessor.py ---
-
-  Purpose: Encode features for the model; inverse transform for human-readable output.
-
-  - Cuaca is treated as categorical: one-hot encoded (3 columns for 0/1/2).
-  - All other numeric columns are scaled with StandardScaler.
-  - transform(df): Returns array of shape (n, 19) — 16 continuous scaled + 3 one-hot.
-  - inverse_transform(X): Converts model output (19 cols) back to 17 original
-    columns (continuous unscaled, cuaca from argmax of one-hot).
-  - n_features_in_: 19 (used as model input_dim). Saved as preprocessor_exp.joblib.
+  - ALL_FEATURES: numeric columns in historical_environment.csv (excluding time).
+  - FEATURES_FORECAST: the six columns written to prediction_forecast.csv.
+  - INPUT_LEN = 168, PRED_LEN = 720.
+  - Multi_Model/multi_config imports INPUT_LEN and PRED_LEN from here so one
+    place defines the horizon.
 
 
---- Main_model/preprocess.py ---
+--- Multi_Model/multi_config.py ---
 
-  Purpose: Load CSV and build (X, Y) windows for training.
+  Purpose: Per-label feature subsets and artifact paths.
 
-  - prepare_data(): Reads data/historical_environment.csv, fits and applies
-    EnvironmentPreprocessor, returns (data_scaled, preprocessor).
-  - create_dataset(data, input_len, pred_len): Sliding windows. X[i] = data[i : i+168],
-    Y[i] = data[i+168 : i+168+336]. Shapes (n_samples, 168, 19) and (n_samples, 336, 19).
-
-
---- Main_model/train2.py ---
-
-  Purpose: Train the official PatchTST and save the best checkpoint and preprocessor.
-
-  - Loads data via prepare_data() and create_dataset(); 80% train / 20% validation.
-  - Model: PatchTST_Official(input_dim=19, input_len=168, pred_len=336, patch_len=16,
-    stride=8, d_model=128, n_heads=16, num_layers=3, revin=True).
-  - Loss: MSE. Optimizer: Adam (lr=0.001, weight_decay=1e-4).
-  - Mini-batch training (batch size 256 on GPU, 64 on CPU) to avoid OOM.
-  - Every 10 epochs: validation loss and metrics (MAE, MSE, RMSE, MAPE). MAPE is
-    computed only on continuous columns [0,1,2] (suhu, kelembapan, ph) to avoid
-    distortion from one-hot cuaca.
-  - Early stopping: if validation loss does not improve for PATIENCE (50) epochs,
-    training stops; best state is restored.
-  - Saves: Main_model/patchtst_model_exp.pth, Main_model/preprocessor_exp.joblib.
+  - REGRESSION_LABELS: suhu, humidity, light_intensity, ph, precipitation.
+  - FEATURES_BY_LABEL: each list starts with the regression target for that
+    model, followed by context variables (cloud, time cycles, lags, etc.).
+  - FEATURES_BY_LABEL["cuaca"]: inputs for the weather classifier (no cuaca in X;
+    labels are derived from precipitation in datasets_multi).
+  - artifacts_dir / artifacts_for_label: models and preprocessors live under
+    Main_model/Multi_Model/artifacts/ as patchtst_<label>.pth and
+    preprocessor_<label>.joblib (cuaca uses patchtst_cuaca.pth).
 
 
---- Main_model/predict_exp.py ---
+--- Multi_Model/datasets_multi.py ---
 
-  Purpose: Produce the 2-week forecast and write prediction_forecast.csv.
+  Purpose: Build numpy window tensors for training.
 
-  - Loads preprocessor (preprocessor_exp.joblib) and model (patchtst_model_exp.pth).
-  - Reads data/historical_environment.csv, takes last 168 rows, transforms with
-    preprocessor.transform() → (168, 19).
-  - Forward: model(input_tensor) → (1, 336, 19). Inverse transform → (336, 17).
-  - Selects FEATURES_FORECAST columns (suhu, cuaca, kelembapan, ph), adds
-    timestamps (first prediction = 1 hour after last input row).
-  - Writes Main_model/prediction_forecast.csv and prints a sample (first days,
-    last days). Optional: use llm_recommendations to send forecast text to an LLM.
+  - load_historical_df(): reads and time-sorts data/historical_environment.csv.
+  - create_windows_xy(): sliding windows X[i] = data[i : i+INPUT_LEN],
+    Y[i] = data[i+INPUT_LEN : i+INPUT_LEN+PRED_LEN], only where full future exists.
+  - build_regression_dataset(label): scales FEATURES_BY_LABEL[label], returns
+    X (N, 168, D), Y (N, 720, D), preprocessor, feature list.
+  - build_cuaca_dataset(): scales cuaca input features; Y is shape (N, 720) of
+    class indices from precip_to_cuaca applied to raw precipitation.
+
+
+--- Multi_Model/train_multi.py ---
+
+  Purpose: Train all six models and save artifacts.
+
+  - For each regression label: build dataset, 80/20 train/val split, Adam,
+    channel-weighted MSE on the target channel, early stopping on validation loss,
+    save state_dict + preprocessor to Main_model/Multi_Model/artifacts/.
+  - Cuaca: CuacaPatchTST with cross-entropy on flattened (time, class) logits;
+    class weights from inverse frequency on training labels to mitigate imbalance.
+  - Run from repo root: python Multi_Model/train_multi.py
+  - To retrain only cuaca after changing classifier logic or data:
+    python Multi_Model/train_multi.py --cuaca-only
+
+
+--- Multi_Model/predict_multi.py ---
+
+  Purpose: Load all six artifacts and write Main_model/prediction_forecast.csv.
+
+  - For each regression label: last 168 rows of CSV -> label preprocessor ->
+    PatchTST_Official -> inverse transform -> one column of length 720.
+  - Cuaca: last 168 rows with cuaca preprocessor -> CuacaPatchTST -> argmax over
+    three classes per hour.
+  - Exported cuaca column: element-wise max of (classifier argmax, class derived
+    from the predicted precipitation series using the SAME thresholds as
+    precip_to_cuaca). Reason: supervised windows require INPUT_LEN + PRED_LEN rows
+    of history+future inside the CSV, so the exact "last 168 hours" input used at
+    deployment is not present as labeled training input when PRED_LEN > 0; the
+    regression head still emits a full precip trace, and the max rule keeps
+    exported weather classes consistent with that trace for the thesis/ops CSV.
+
+
+--- Main_model/eval_exp.py ---
+
+  Purpose: Offline evaluation on Multi_Model artifacts (regression metrics on
+  scaled target channel; mean per-step accuracy for cuaca classifier).
+
+  - Run: python Main_model/eval_exp.py (from repo root).
 
 
 --- utils.py ---
 
-  Purpose: Evaluation metrics used in Main_model/train2.py.
+  Purpose: compute_metrics (MAE, RMSE, MAPE, etc.) used in train_multi validation
+  printing for regression heads.
 
-  - mae, mse, rmse (root mean squared error = sqrt(mse)), smape (symmetric MAPE).
-  - compute_metrics(pred, target, continuous_cols=None): Returns MAE, MSE, RMSE,
-    MAPE. If continuous_cols is provided (e.g. [0,1,2]), MAPE is computed only
-    on those columns (for stability when cuaca is one-hot).
+
+--- Main_model/preprocessor.py (EnvironmentPreprocessor) ---
+
+  Purpose: StandardScaler on the configured feature columns; optional legacy
+  one-hot for cuaca only when "cuaca" appears in the fitted feature list tied to
+  ALL_FEATURES. Multi_Model per-label lists omit cuaca from X for the cuaca model,
+  so those preprocessors are continuous-only for their feature vectors.
 
 
 --- llm_recommendations.py ---
 
-  Purpose: Turn a numeric forecast into text and get natural-language recommendations.
-
-  - forecast_to_text(forecast_7d): Formats forecast dicts/array as text.
-  - get_llm_recommendations(forecast_text, crop, location): Sends prompt to LLM API.
-  - get_recommendations_from_forecast(forecast_7d, ...): Convenience wrapper.
-  - Can be used with the output of predict_exp (e.g. pass the 336-hour forecast
-    summarized by day or a subset) to get lettuce care recommendations.
+  Purpose: Optional natural-language recommendations from a numeric forecast;
+  can consume rows/columns from prediction_forecast.csv if adapted to the six
+  output columns.
 
 
 --------------------------------------------------------------------------------
-4. END-TO-END DATA FLOW (CURRENT)
+4. END-TO-END DATA FLOW (PRIMARY)
 --------------------------------------------------------------------------------
 
   (1) Data
       python fetch_openmeteo_historical.py
-        → data/historical_environment.csv (time + 17 features, hourly, 5+ years)
+        -> data/historical_environment.csv
 
-  (2) Training
-      python Main_model/train2.py
-        → Main_model/preprocess.prepare_data() loads CSV, preprocessor fits/transforms
-        → create_dataset() → (X, Y) with shapes (n, 168, 19), (n, 336, 19)
-        → Train PatchTST_Official, early stopping, save best model + preprocessor
-        → Main_model/patchtst_model_exp.pth, Main_model/preprocessor_exp.joblib
+  (2) Training (GPU recommended; long run)
+      python Multi_Model/train_multi.py
+        -> Main_model/Multi_Model/artifacts/patchtst_*.pth and preprocessor_*.joblib
 
   (3) Prediction
-      python Main_model/predict_exp.py
-        → Load preprocessor and model
-        → Last 168 hours from historical_environment.csv → transform → (1, 168, 19)
-        → model(input) → (1, 336, 19) → inverse_transform → select suhu, cuaca,
-          kelembapan, ph → Main_model/prediction_forecast.csv (336 rows, 2 weeks)
+      python Multi_Model/predict_multi.py
+        -> Main_model/prediction_forecast.csv (720 rows, columns in FEATURES_FORECAST)
+
+  (4) Optional evaluation
+      python Main_model/eval_exp.py
 
 
 --------------------------------------------------------------------------------
-5. LEGACY / UNUSED FILES (OLD PIPELINE)
+5. KEY EQUATIONS (FOR PAPER)
 --------------------------------------------------------------------------------
 
-The following were used in an earlier 7-day pipeline based on BMKG + lettuce
-data and a simpler Transformer. They are not used by the current Main_model.
+  - For regression label l with D_l input channels:
+      X_l in R^{168 x D_l},   Y_l in R^{720 x D_l}  (scaled space).
+      PatchTST maps X_l to Y_hat_l with the same tail shape; loss stresses channel 0.
 
-  - config.py          — Old config (INPUT_LEN=24, PRED_LEN=7). Main_model uses
-                         Main_model/config_exp.py.
-  - fusion.py          — Merged internet_data.csv + realtime_data.csv. Replaced
-                         by single source: historical_environment.csv.
-  - preprocess.py      — Prepared merged data for old train.py. Replaced by
-                         Main_model/preprocess.py + Main_model/preprocessor.py.
-  - train.py           — Trained simple PatchTST (model/patchtst.py) on merged
-                         data. Replaced by Main_model/train2.py.
-  - predict.py         — 7-day forecast from realtime_data. Replaced by
-                         Main_model/predict_exp.py.
-  - build_internet_data.py, generate_lettuce_data.py, fetch_bmkg_coblong.py
-                         — Built internet_data and realtime_data. No longer
-                         used; data now comes from fetch_openmeteo_historical.py.
+  - For cuaca classifier:
+      X_c in R^{168 x D_c}; logits Z in R^{720 x 3}; class y_hat_t = argmax Z_t.
+      Training minimizes weighted cross-entropy over all (t, class) pairs.
 
-  - model/patchtst.py  — Simple Transformer (no patching). Still present; the
-                         active model is model/patchtst_official.py (official
-                         PatchTST with patching from PatchTST-main).
+  - Precipitation-to-class mapping (labels and fusion):
+      c(p) = 2 if p > 0.5, else 1 if p > 0.1, else 0.
+
+  - Exported forecast weather class:
+      cuaca_export_t = max( y_hat_t, c( precip_forecast_t ) ) with max in {0,1,2}.
 
 
 --------------------------------------------------------------------------------
-6. WHY PATCHTST INSTEAD OF GRU/LSTM?
+6. LEGACY PIPELINE (MAIN_MODEL — SINGLE PATCHTST)
 --------------------------------------------------------------------------------
 
-  - Parallelism: Transformers process the full input (168 hours as patches) in
-    parallel; RNNs are sequential.
-  - Long-range dependencies: Self-attention lets any patch attend to any other;
-    in RNNs, information from early steps can fade.
-  - PatchTST in the literature achieves strong long-horizon forecasting; this
-    project uses the official implementation (PatchTST-main) with patching,
-    RevIN, and 2-week prediction.
+These files remain in the repository for an earlier experiment: one PatchTST over
+a single encoded tensor (historically 19 channels with cuaca one-hot) and a
+different forecast length in older docs. They are NOT what predict_multi.py uses.
+
+  - Main_model/train2.py          — trains one PatchTST_Official, saves e.g.
+                                    Main_model/patchtst_model_exp.pth
+  - Main_model/predict_exp.py     — single-model forecast path
+  - Main_model/preprocess.py      — windowing helper for that path
+  - Main_model/preprocessor.py    — shared class; legacy mode if cuaca in ALL_FEATURES
+
+Use Multi_Model for the six-model hydroponic pipeline and the current
+FEATURES_FORECAST layout.
 
 
 --------------------------------------------------------------------------------
-7. KEY EQUATIONS (FOR PAPER)
+7. WHY PATCHTST INSTEAD OF GRU/LSTM?
 --------------------------------------------------------------------------------
 
-  - Input:  X ∈ R^{168×19}  (168 hours, 19 encoded features)
-  - Patching: 168 → ~21 patch tokens, each patch projected to d_model.
-  - RevIN: normalize → backbone → denormalize.
-  - Output:  Y_pred ∈ R^{336×19}  (336 hours, 19 features); forecast CSV uses
-    the 4 columns [suhu, cuaca, kelembapan, ph].
-  - Loss: L = MSE(Y_pred, Y_true). Metrics: MAE, MSE, RMSE, MAPE (on continuous
-    targets for MAPE).
+  - Parallelism: Transformers process the patched sequence in parallel; RNNs are
+    inherently more sequential.
+  - Long-range dependencies: Self-attention connects distant patches directly.
+  - PatchTST is a strong baseline for long-horizon forecasting; this project uses
+    the official implementation with patching and RevIN.
 
 
 --------------------------------------------------------------------------------
@@ -247,7 +263,7 @@ data and a simpler Transformer. They are not used by the current Main_model.
   - PatchTST: "A Time Series is Worth 64 Words: Long-term Forecasting with
     Transformers" (Nie et al., ICLR 2023).
   - Open-Meteo: Historical Weather API (archive-api.open-meteo.com).
-  - Lactuca sativa: soil moisture and pH ranges (e.g. data/lettuce_reference.md).
+  - Lettuce growing context: data/lettuce_reference.md (and companion CSV).
 
 ================================================================================
 End of Explanation.txt
