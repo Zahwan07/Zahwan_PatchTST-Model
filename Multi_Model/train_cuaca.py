@@ -77,7 +77,7 @@ def main():
     Y_tensor = torch.tensor(Yc, dtype=torch.long)
     n2 = len(X_tensor)
     idx_all = torch.randperm(n2)
-    train_end = int(0.7 * n2)
+    train_end = int(0.8 * n2)
     X_train, X_val = X_tensor[idx_all[:train_end]], X_tensor[idx_all[train_end:]]
     Y_train, Y_val = Y_tensor[idx_all[:train_end]], Y_tensor[idx_all[train_end:]]
 

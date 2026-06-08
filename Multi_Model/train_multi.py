@@ -19,7 +19,7 @@ import random
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, Dataset
 import joblib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -49,6 +49,37 @@ def _set_seed(seed: int = SEED):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+
+
+def _train_val_indices(n: int, train_fraction: float = 0.8, seed: int = SEED) -> tuple[np.ndarray, np.ndarray]:
+    """Shuffle window indices once; avoid materializing full X/Y torch tensors on CPU."""
+    rng = np.random.default_rng(seed)
+    perm = rng.permutation(n)
+    train_end = int(train_fraction * n)
+    return perm[:train_end], perm[train_end:]
+
+
+class _IndexedWindowDataset(Dataset):
+    """Lazy batches from numpy windows — one copy in RAM, no torch.tensor(N, ...) duplicate."""
+
+    def __init__(self, x: np.ndarray, y: np.ndarray, indices: np.ndarray, y_dtype: torch.dtype = torch.float32):
+        self.x = np.ascontiguousarray(x, dtype=np.float32)
+        self.y = y
+        self.indices = indices
+        self.y_dtype = y_dtype
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+    def __getitem__(self, i: int):
+        j = int(self.indices[i])
+        xb = torch.from_numpy(self.x[j])
+        yj = self.y[j]
+        if self.y_dtype == torch.long:
+            yb = torch.tensor(yj, dtype=torch.long)
+        else:
+            yb = torch.from_numpy(np.ascontiguousarray(yj, dtype=np.float32))
+        return xb, yb
 
 
 class CuacaPatchTST(torch.nn.Module):
@@ -84,18 +115,22 @@ def _train_patchtst_single_label(
     X, Y, preprocessor, features = build_regression_dataset(label, df=df, input_len=INPUT_LEN, pred_len=PRED_LEN)
     input_dim = X.shape[-1]
 
-    X_tensor = torch.tensor(X, dtype=torch.float32)
-    Y_tensor = torch.tensor(Y, dtype=torch.float32)
-
-    n = len(X_tensor)
-    idx = torch.randperm(n)
-    train_end = int(0.7 * n)
-    X_train, X_val = X_tensor[idx[:train_end]], X_tensor[idx[train_end:]]
-    Y_train, Y_val = Y_tensor[idx[:train_end]], Y_tensor[idx[train_end:]]
+    n = len(X)
+    train_idx, val_idx = _train_val_indices(n, train_fraction=0.8, seed=SEED)
 
     batch_size = 256 if torch.cuda.is_available() else 64
-    train_loader = DataLoader(TensorDataset(X_train, Y_train), batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(TensorDataset(X_val, Y_val), batch_size=batch_size)
+    train_loader = DataLoader(
+        _IndexedWindowDataset(X, Y, train_idx),
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=0,
+    )
+    val_loader = DataLoader(
+        _IndexedWindowDataset(X, Y, val_idx),
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=0,
+    )
 
     model = PatchTST_Official(
         input_dim=input_dim,
@@ -183,16 +218,11 @@ def _train_patchtst_cuaca(
     device: torch.device,
 ):
     Xc, Yc, pre_cuaca, features_c = build_cuaca_dataset(df=df, input_len=INPUT_LEN, pred_len=PRED_LEN)
-    X_tensor = torch.tensor(Xc, dtype=torch.float32)
-    Y_tensor = torch.tensor(Yc, dtype=torch.long)
 
-    n = len(X_tensor)
-    idx = torch.randperm(n)
-    train_end = int(0.7 * n)
-    X_train, X_val = X_tensor[idx[:train_end]], X_tensor[idx[train_end:]]
-    Y_train, Y_val = Y_tensor[idx[:train_end]], Y_tensor[idx[train_end:]]
+    n = len(Xc)
+    train_idx, val_idx = _train_val_indices(n, train_fraction=0.8, seed=SEED)
 
-    y_flat = Y_train.numpy().reshape(-1).astype(np.int64)
+    y_flat = Yc[train_idx].reshape(-1).astype(np.int64)
     counts = np.bincount(y_flat, minlength=3).astype(np.float64)
     total_labels = float(len(y_flat))
     ce_w = total_labels / (3.0 * np.maximum(counts, 1.0))
@@ -200,8 +230,18 @@ def _train_patchtst_cuaca(
     weight_t = torch.tensor(ce_w, dtype=torch.float32, device=device)
 
     batch_size = 128 if torch.cuda.is_available() else 64
-    train_loader = DataLoader(TensorDataset(X_train, Y_train), batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(TensorDataset(X_val, Y_val), batch_size=batch_size)
+    train_loader = DataLoader(
+        _IndexedWindowDataset(Xc, Yc, train_idx, y_dtype=torch.long),
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=0,
+    )
+    val_loader = DataLoader(
+        _IndexedWindowDataset(Xc, Yc, val_idx, y_dtype=torch.long),
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=0,
+    )
 
     model = CuacaPatchTST(input_dim=Xc.shape[-1]).to(device)
     criterion = torch.nn.CrossEntropyLoss(weight=weight_t)

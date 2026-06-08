@@ -69,7 +69,7 @@ def _make_val_indices(total_rows: int, input_len: int, pred_len: int, seed: int 
         raise ValueError("Not enough rows to build validation windows.")
     rng = np.random.default_rng(seed)
     perm = rng.permutation(n_samples)
-    train_end = int(0.7 * n_samples)
+    train_end = int(0.8 * n_samples)
     return perm[train_end:]
 
 
@@ -192,7 +192,7 @@ def main():
 
     df = load_historical_df()
     val_indices = _make_val_indices(len(df), INPUT_LEN, PRED_LEN, seed=SEED)
-    print(f"Validation samples: {len(val_indices)} (70/30 split, seed={SEED})")
+    print(f"Validation samples: {len(val_indices)} (80/20 split, seed={SEED})")
 
     for label in REGRESSION_LABELS:
         try:
