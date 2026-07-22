@@ -1,31 +1,26 @@
-varian,pred_len,train_fraction,label,MAE,MSE,RMSE,MAPE_pct,n_features,accuracy_pct
-"Konfigurasi utama (720 jam, 70/30)",720,0.7,suhu,0.3178,0.17939,0.4235,564.0,12,
-"Konfigurasi utama (720 jam, 70/30)",720,0.7,humidity,0.4034,0.313027,0.5595,172.03,9,
-"Konfigurasi utama (720 jam, 70/30)",720,0.7,light_intensity,0.1995,0.113494,0.3369,89.61,6,
-"Konfigurasi utama (720 jam, 70/30)",720,0.7,ph,0.4632,0.394826,0.6284,387.38,7,
-"Konfigurasi utama (720 jam, 70/30)",720,0.7,precipitation,0.3132,0.952014,0.9757,95.38,12,
-"Konfigurasi utama (720 jam, 70/30)",720,0.7,cuaca,,,,,17,68.86
-"720 jam, 70/30",720,0.7,suhu,0.3178,0.17939,0.4235,564.0,12,
-"720 jam, 70/30",720,0.7,humidity,0.4034,0.313027,0.5595,172.03,9,
-"720 jam, 70/30",720,0.7,light_intensity,0.1995,0.113494,0.3369,89.61,6,
-"720 jam, 70/30",720,0.7,ph,0.4632,0.394826,0.6284,387.38,7,
-"720 jam, 70/30",720,0.7,precipitation,0.3132,0.952014,0.9757,95.38,12,
-"720 jam, 70/30",720,0.7,cuaca,,,,,17,68.86
-"720 jam, 80/20",720,0.8,suhu,0.3165,0.178082,0.422,571.24,12,
-"720 jam, 80/20",720,0.8,humidity,0.4075,0.313362,0.5598,169.69,9,
-"720 jam, 80/20",720,0.8,light_intensity,0.194,0.11194,0.3346,90.29,6,
-"720 jam, 80/20",720,0.8,ph,0.465,0.3977,0.6306,388.3,7,
-"720 jam, 80/20",720,0.8,precipitation,0.3183,0.953495,0.9765,98.87,12,
-"720 jam, 80/20",720,0.8,cuaca,,,,,17,69.48
-"336 jam, 70/30",336,0.7,suhu,0.2991,0.160216,0.4003,537.45,12,
-"336 jam, 70/30",336,0.7,humidity,0.3827,0.281155,0.5302,170.96,9,
-"336 jam, 70/30",336,0.7,light_intensity,0.1899,0.107988,0.3286,88.57,6,
-"336 jam, 70/30",336,0.7,ph,0.33,0.197397,0.4443,291.45,7,
-"336 jam, 70/30",336,0.7,precipitation,0.3187,0.953697,0.9766,101.13,12,
-"336 jam, 70/30",336,0.7,cuaca,,,,,17,75.04
-"336 jam, 80/20",336,0.8,suhu,0.2995,0.159501,0.3994,530.17,12,
-"336 jam, 80/20",336,0.8,humidity,0.3829,0.279014,0.5282,169.92,9,
-"336 jam, 80/20",336,0.8,light_intensity,0.1832,0.105585,0.3249,88.23,6,
-"336 jam, 80/20",336,0.8,ph,0.3307,0.198834,0.4459,290.36,7,
-"336 jam, 80/20",336,0.8,precipitation,0.3191,0.954905,0.9772,101.93,12,
-"336 jam, 80/20",336,0.8,cuaca,,,,,17,75.45
+varian,pred_len,train_fraction,label,MAE,MSE,RMSE,MAPE_pct,n_features,error,accuracy_pct
+"Konfigurasi utama (720 jam, 70/30)",720,0.7,suhu,,,,,,Missing model for 'suhu': C:\Users\User\ModelTA\Main_model\Multi_Model\artifacts\patchtst_suhu.pth,
+"Konfigurasi utama (720 jam, 70/30)",720,0.7,humidity,,,,,,Missing model for 'humidity': C:\Users\User\ModelTA\Main_model\Multi_Model\artifacts\patchtst_humidity.pth,
+"Konfigurasi utama (720 jam, 70/30)",720,0.7,light_intensity,,,,,,Missing model for 'light_intensity': C:\Users\User\ModelTA\Main_model\Multi_Model\artifacts\patchtst_light_intensity.pth,
+"Konfigurasi utama (720 jam, 70/30)",720,0.7,precipitation,,,,,,Missing model for 'precipitation': C:\Users\User\ModelTA\Main_model\Multi_Model\artifacts\patchtst_precipitation.pth,
+"Konfigurasi utama (720 jam, 70/30)",720,0.7,cuaca,,,,,,Missing cuaca artifacts.,
+"720 jam, 70/30",720,0.7,suhu,0.3175,0.179062,0.4232,172.08,12.0,,
+"720 jam, 70/30",720,0.7,humidity,0.4025,0.311628,0.5582,175.19,9.0,,
+"720 jam, 70/30",720,0.7,light_intensity,0.1992,0.11314,0.3364,88.8,6.0,,
+"720 jam, 70/30",720,0.7,precipitation,0.3156,0.960634,0.9801,96.58,12.0,,
+"720 jam, 70/30",720,0.7,cuaca,,,,,17.0,,68.83
+"720 jam, 80/20",720,0.8,suhu,0.3164,0.178113,0.422,174.22,12.0,,
+"720 jam, 80/20",720,0.8,humidity,0.4066,0.311812,0.5584,172.77,9.0,,
+"720 jam, 80/20",720,0.8,light_intensity,0.1936,0.111559,0.334,89.67,6.0,,
+"720 jam, 80/20",720,0.8,precipitation,0.3199,0.958452,0.979,99.86,12.0,,
+"720 jam, 80/20",720,0.8,cuaca,,,,,17.0,,69.37
+"336 jam, 70/30",336,0.7,suhu,0.2989,0.160074,0.4001,163.77,12.0,,
+"336 jam, 70/30",336,0.7,humidity,0.3823,0.280473,0.5296,174.38,9.0,,
+"336 jam, 70/30",336,0.7,light_intensity,0.1897,0.107739,0.3282,87.81,6.0,,
+"336 jam, 70/30",336,0.7,precipitation,0.3196,0.95619,0.9778,101.71,12.0,,
+"336 jam, 70/30",336,0.7,cuaca,,,,,17.0,,74.9
+"336 jam, 80/20",336,0.8,suhu,0.2995,0.159673,0.3996,162.48,12.0,,
+"336 jam, 80/20",336,0.8,humidity,0.3823,0.278155,0.5274,173.29,9.0,,
+"336 jam, 80/20",336,0.8,light_intensity,0.1829,0.105285,0.3245,87.36,6.0,,
+"336 jam, 80/20",336,0.8,precipitation,0.3199,0.957886,0.9787,102.37,12.0,,
+"336 jam, 80/20",336,0.8,cuaca,,,,,17.0,,75.36

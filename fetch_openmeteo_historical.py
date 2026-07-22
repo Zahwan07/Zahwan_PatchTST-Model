@@ -21,7 +21,7 @@ LON = 107.6219
 
 OUTPUT_PATH = "data/historical_environment.csv"
 
-# Fetch in yearly chunks to avoid API limits
+# Tidak bisa fetch 5 tahun sekaligus karena API limit 31 hari per request, jadi chunk by year
 YEAR_CHUNKS = [
     ("2020-01-01", "2020-12-31"),
     ("2021-01-01", "2021-12-31"),
@@ -29,10 +29,10 @@ YEAR_CHUNKS = [
     ("2023-01-01", "2023-12-31"),
     ("2024-01-01", "2024-12-31"),
     ("2025-01-01", "2025-12-31"),
-    ("2026-01-01", "2026-05-31"),
+    ("2026-01-01", "2026-07-01"),
 ]
 
-# Open-Meteo hourly parameters for better temperature/weather context
+# Parameter Open-Meteo  per jam
 HOURLY_PARAMS = (
     "temperature_2m,relative_humidity_2m,dewpoint_2m,"
     "surface_pressure,cloud_cover,shortwave_radiation,"

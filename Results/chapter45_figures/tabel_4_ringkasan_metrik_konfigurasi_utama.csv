@@ -1,6 +1,5 @@
 label,MAE,RMSE,MAPE_pct
-suhu,0.3178,0.4235,564.0
-humidity,0.4034,0.5595,172.03
-light_intensity,0.1995,0.3369,89.61
-ph,0.4632,0.6284,387.38
-precipitation,0.3132,0.9757,95.38
+suhu,,,
+humidity,,,
+light_intensity,,,
+precipitation,,,
